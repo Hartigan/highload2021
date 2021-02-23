@@ -1,4 +1,7 @@
 using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Miner.Models;
@@ -8,115 +11,181 @@ namespace Miner
 {
     public class ExplorerWorker
     {
-        private readonly Client _client;
+        private readonly ClientFactory _clientFactory;
         private readonly ILogger<ExplorerWorker> _logger;
         private readonly FastPriorityQueue<MyNode> _queue = new FastPriorityQueue<MyNode>(100000);
-        private readonly Action<MyNode> _pushCell;
-        public ExplorerWorker(Client client, ILogger<ExplorerWorker> logger, Action<MyNode> pushCell)
+        private readonly ConcurrentQueue<MyNode> _cells;
+        public ExplorerWorker(
+            ClientFactory clientFactory,
+            ILogger<ExplorerWorker> logger,
+            ConcurrentQueue<MyNode> cells)
         {
-            _client = client;
+            _clientFactory = clientFactory;
             _logger = logger;
-            _pushCell = pushCell;
+            _cells = cells;
+        }
+
+        private async Task<Explore> DoRequest(Area area, Client client)
+        {
+            Explore initialReport = null;
+            do
+            {
+                initialReport = await client.ExploreAsync(area);
+            } while(initialReport == null);
+            return initialReport;
+        }
+
+        private Task Process()
+        {
+            return Task.Run(async () =>
+            {
+                var client = _clientFactory.Create();
+                while(true)
+                {
+                    MyNode node = null;
+                    while (_queue.Count == 0)
+                    {
+                        await Task.Yield();
+                    }
+                    lock(_queue)
+                    {
+                        if (_queue.Count > 0)
+                        {
+                            node = _queue.Dequeue();
+                        }
+                        else
+                        {
+                            continue;
+                        }
+                    }
+
+                    if (node.IsCell())
+                    {
+                        _cells.Enqueue(node);
+                        continue;
+                    }
+
+                    Area area1, area2;
+
+                    if (node.Report.Area.SizeX > node.Report.Area.SizeY) {
+                        var div = node.Report.Area.SizeX > 2 ? 3 : 2;
+                        var newSizeX1 = node.Report.Area.SizeX / div;
+                        var newSizeX2 = node.Report.Area.SizeX - newSizeX1;
+                        area1 = new Area() {
+                            PosX = node.Report.Area.PosX,
+                            PosY = node.Report.Area.PosY,
+                            SizeX = newSizeX1,
+                            SizeY = node.Report.Area.SizeY
+                        };
+                        area2 = new Area() {
+                            PosX = node.Report.Area.PosX + newSizeX1,
+                            PosY = node.Report.Area.PosY,
+                            SizeX = newSizeX2,
+                            SizeY = node.Report.Area.SizeY
+                        };
+                    }
+                    else {
+                        var div = node.Report.Area.SizeY > 2 ? 3 : 2;
+                        var newSizeY1 = node.Report.Area.SizeY / div;
+                        var newSizeY2 = node.Report.Area.SizeY - newSizeY1;
+                        area1 = new Area() {
+                            PosX = node.Report.Area.PosX,
+                            PosY = node.Report.Area.PosY,
+                            SizeX = node.Report.Area.SizeX,
+                            SizeY = newSizeY1
+                        };
+                        area2 = new Area() {
+                            PosX = node.Report.Area.PosX,
+                            PosY = node.Report.Area.PosY + newSizeY1,
+                            SizeX = node.Report.Area.SizeX,
+                            SizeY = newSizeY2
+                        };
+                    }
+
+                    Explore report = await DoRequest(area1, client);
+
+                    MyNode node1 = new MyNode() {
+                        Report = new Explore() {
+                            Area = area2,
+                            Amount = node.Report.Amount - report.Amount
+                        }
+                    };
+
+                    MyNode node2 = new MyNode() {
+                        Report = report
+                    };
+
+                    lock(_queue)
+                    {
+                        if (!node1.IsEmpty()) {
+                            _queue.Enqueue(node1, node1.CalculatePriority());
+                        }
+
+                        if (!node2.IsEmpty()) {
+                            _queue.Enqueue(node2, node2.CalculatePriority());
+                        }
+                    }
+                    
+                }
+            });
+        }
+
+        private Task AddInitial(Area area, Client client)
+        {
+            return Task.Run(async () => {
+                var report = await DoRequest(area, client);
+                MyNode node = new MyNode() {
+                    Report = report
+                };
+
+                lock(_queue)
+                {
+                    _queue.Enqueue(node, node.CalculatePriority());
+                }
+            });
         }
 
         public async Task Doit()
         {
-            for(int x = 0; x< 7; ++x) {
-                for(int y = 0; y < 7;++y) {
+
+            Client client = _clientFactory.Create();
+
+            List<Task> tasks = new List<Task>(100);
+
+            for(int x = 0; x< 5; ++x) {
+                for(int y = 0; y < 5;++y) {
                     var area = new Area() {
-                        PosX = x*500,
-                        PosY = y*500,
-                        SizeX = 500,
-                        SizeY = 500
+                        PosX = x*700,
+                        PosY = y*700,
+                        SizeX = 700,
+                        SizeY = 700
                     };
-                    Explore initialReport = null;
-                    do
-                    {
-                        initialReport = await _client.ExploreAsync(area);
-                    } while(initialReport == null);
-                    MyNode initialNode = new MyNode(){
-                        Report = initialReport
-                    };
-                    _queue.Enqueue(initialNode, initialNode.CalculatePriority());
+
+                    tasks.Add(AddInitial(area, client));
+                    
                 }
             }
-            
 
-            while(_queue.Count > 0)
-            {
-                var node = _queue.Dequeue();
+            tasks.Add(Process());
+            tasks.Add(Process());
+            tasks.Add(Process());
+            tasks.Add(Process());
+            tasks.Add(Process());
+            tasks.Add(Process());
+            tasks.Add(Process());
+            tasks.Add(Process());
+            tasks.Add(Process());
+            tasks.Add(Process());
+            tasks.Add(Process());
+            tasks.Add(Process());
+            tasks.Add(Process());
+            tasks.Add(Process());
+            tasks.Add(Process());
+            tasks.Add(Process());
+            tasks.Add(Process());
+            tasks.Add(Process());
 
-                Area area1, area2;
-
-                if (node.Report.Area.SizeX > node.Report.Area.SizeY) {
-                    var newSizeX1 = node.Report.Area.SizeX / 2;
-                    var newSizeX2 = node.Report.Area.SizeX - newSizeX1;
-                    area1 = new Area() {
-                        PosX = node.Report.Area.PosX,
-                        PosY = node.Report.Area.PosY,
-                        SizeX = newSizeX1,
-                        SizeY = node.Report.Area.SizeY
-                    };
-                    area2 = new Area() {
-                        PosX = node.Report.Area.PosX + newSizeX1,
-                        PosY = node.Report.Area.PosY,
-                        SizeX = newSizeX2,
-                        SizeY = node.Report.Area.SizeY
-                    };
-                }
-                else {
-                    var newSizeY1 = node.Report.Area.SizeY / 2;
-                    var newSizeY2 = node.Report.Area.SizeY - newSizeY1;
-                    area1 = new Area() {
-                        PosX = node.Report.Area.PosX,
-                        PosY = node.Report.Area.PosY,
-                        SizeX = node.Report.Area.SizeX,
-                        SizeY = newSizeY1
-                    };
-                    area2 = new Area() {
-                        PosX = node.Report.Area.PosX,
-                        PosY = node.Report.Area.PosY + newSizeY1,
-                        SizeX = node.Report.Area.SizeX,
-                        SizeY = newSizeY2
-                    };
-                }
-
-                Explore report = null;
-
-                do
-                {
-                    report = await _client.ExploreAsync(area2);
-                } while(report == null);
-
-                MyNode node1 = new MyNode() {
-                    Report = new Explore() {
-                        Area = area1,
-                        Amount = node.Report.Amount - report.Amount
-                    }
-                };
-
-                MyNode node2 = new MyNode() {
-                    Report = report
-                };
-
-                if (!node1.IsEmpty()) {
-                    if (node1.IsCell()) {
-                        _pushCell(node1);
-                    }
-                    else {
-                        _queue.Enqueue(node1, node1.CalculatePriority());
-                    }
-                }
-
-                if (!node2.IsEmpty()) {
-                    if (node2.IsCell()) {
-                        _pushCell(node2);
-                    }
-                    else {
-                        _queue.Enqueue(node2, node2.CalculatePriority());
-                    }
-                }
-            }
+            await Task.WhenAll(tasks);
         }
     }
 }

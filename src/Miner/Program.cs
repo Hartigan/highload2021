@@ -22,16 +22,18 @@ namespace Miner
                 });
                 builder.SetMinimumLevel(LogLevel.Debug);
             });
-            Client client = new Client(baseUrl, factory.CreateLogger<Client>());
+            ClientFactory clientFactory = new ClientFactory(baseUrl, factory.CreateLogger<Client>());
 
-            MainWorker worker = new MainWorker(factory, client);
+            MainWorker worker = new MainWorker(factory, clientFactory);
 
-            bool ready = false;
-            do
-            {
-                await Task.Delay(100);
-                ready = await client.HealthCheckAsync();
-            } while(!ready);
+
+            // Client client = clientFactory.Create();
+            // bool ready = false;
+            // do
+            // {
+            //     await Task.Delay(100);
+            //     ready = await client.HealthCheckAsync();
+            // } while(!ready);
 
             await worker.Doit();
 

@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Miner.Models;
@@ -9,56 +10,39 @@ namespace Miner
     public class MainWorker
     {
         private readonly DiggerWorker _diggerWorker;
-        private readonly ExchangerWorker _exchangerWorker;
         private readonly ExplorerWorker _explorerWorker;
-        private readonly LicenseWorker _licenseWorker;
-
-        private readonly ConcurrentBag<License> _licenses = new ConcurrentBag<License>();
-        private readonly ConcurrentBag<string> _treasures = new ConcurrentBag<string>();
-        private readonly ConcurrentBag<int> _coins = new ConcurrentBag<int>();
-        private readonly ConcurrentBag<MyNode> _cells = new ConcurrentBag<MyNode>();
+        private readonly ConcurrentQueue<MyNode> _cells = new ConcurrentQueue<MyNode>();
         public MainWorker(
             ILoggerFactory loggerFactory,
-            Client client)
+            ClientFactory clientFactory)
         {
             var logger = loggerFactory.CreateLogger<MainWorker>();
             _diggerWorker = new DiggerWorker(
-                client,
+                clientFactory,
                 loggerFactory.CreateLogger<DiggerWorker>(),
-                _licenses,
-                _treasures,
                 _cells);
-            _exchangerWorker = new ExchangerWorker(
-                client,
-                loggerFactory.CreateLogger<ExchangerWorker>(),
-                _coins,
-                _treasures
-            );
             _explorerWorker = new ExplorerWorker(
-                client,
+                clientFactory,
                 loggerFactory.CreateLogger<ExplorerWorker>(),
-                cell => {
-                    _cells.Add(cell);
-                }
-            );
-            _licenseWorker = new LicenseWorker(
-                client,
-                loggerFactory.CreateLogger<LicenseWorker>(),
-                _coins,
-                _licenses
+                _cells
             );
         }
 
+
+        private List<Task> _workers = new List<Task>();
+
         public async Task Doit()
         {
-            await Task.WhenAll(
-                _explorerWorker.Doit(),
-                _licenseWorker.Doit(),
-                _diggerWorker.Doit(),
-                _diggerWorker.Doit(),
-                _diggerWorker.Doit(),
-                _exchangerWorker.Doit()
-            );
+            _workers.Add(Task.Run(_explorerWorker.Doit));
+
+            await Task.Delay(1000);
+
+            for (int i = 0; i < 10; ++i) {
+                
+                _workers.Add(Task.Run(_diggerWorker.Doit));
+            }
+
+            await Task.WhenAll(_workers);
         }
     }
 }

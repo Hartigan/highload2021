@@ -30,14 +30,14 @@ namespace Miner
         public async Task Doit()
         {
             while(true) {
-                if (_licenses.Count >= 7) {
+                if (_licenses.Count > 0) {
                     await Task.Yield();
                     continue;
                 }
 
                 License license = null;
                 List<int> coins = _empty;
-                if (_licenses.Count < 3 && _coins.Count > 0)
+                if (_coins.Count > 0)
                 {
                     coins = new List<int>();
                     int coin = 0;

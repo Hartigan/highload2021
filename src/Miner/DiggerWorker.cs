@@ -1,85 +1,174 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Miner.Models;
-using Priority_Queue;
 
 namespace Miner
 {
     public class DiggerWorker
     {
-        private readonly Client _client;
+        private readonly ClientFactory _clientFactory;
         private readonly ILogger<DiggerWorker> _logger;
-        private readonly ConcurrentBag<License> _licenses;
-        private readonly ConcurrentBag<string> _treasures;
-        private readonly ConcurrentBag<MyNode> _cells;
+        private readonly ConcurrentQueue<MyNode> _cells;
+        private readonly List<int> _empty = new List<int>();
         public DiggerWorker(
-            Client client,
+            ClientFactory clientFactory,
             ILogger<DiggerWorker> logger,
-            ConcurrentBag<License> licenses,
-            ConcurrentBag<string> treasures,
-            ConcurrentBag<MyNode> cells)
+            ConcurrentQueue<MyNode> cells)
         {
-            _client = client;
+            _clientFactory = clientFactory;
             _logger = logger;
-            _licenses = licenses;
-            _treasures = treasures;
             _cells = cells;
+        }
+
+        private async Task<T> WithRetry<T>(Func<Task<T>> func)
+        {
+            T result = default(T);
+            do
+            {
+                result = await func();
+            } while(result == null);
+            return result;
+        }
+
+        private async Task<License> GetLicenseAsync(Stack<int> myCoins, Client client, bool free)
+        {
+            List<int> coins = _empty;
+
+            if (!free) {
+                if (myCoins.Count > 0)
+                {
+                    coins = new List<int>();
+                    coins.Add(myCoins.Pop());
+                }
+            }
+
+            return await WithRetry(() => client.BuyLicenseAsync(coins));
+        }
+
+        private async Task SellAsync(string treasure, Stack<int> myCoins, Client client)
+        {
+            List<int> coins = await WithRetry(() => client.CashAsync(treasure));
+
+            if (myCoins.Count > 100) {
+                return;
+            }
+
+            foreach(var coin in coins) {
+                myCoins.Push(coin);
+            }
         }
 
         public async Task Doit()
         {
-            License license;
+            Stack<int> myCoins = new Stack<int>();
+            Stack<Task> cashTasks = new Stack<Task>();
 
-            while(!_licenses.TryTake(out license))
-            {
-                await Task.Yield();
-            }
+            Client licenseClient = _clientFactory.Create();
+            Client cashClient = _clientFactory.Create();
+
+            Client[] diggerClients = {
+                _clientFactory.Create(),
+                _clientFactory.Create(),
+                _clientFactory.Create(),
+                _clientFactory.Create(),
+                _clientFactory.Create(),
+            };
+
+            License license = null; 
+            int waitCellCounter = 0;
+
+            List<MyNode> currentNodes = new List<MyNode>(5);
             
             while(true) {
-                MyNode node = null;
-                while(!_cells.TryTake(out node))
+
+                while (currentNodes.Count > 3)
                 {
-                    await Task.Yield();
+                    _cells.Enqueue(currentNodes[currentNodes.Count - 1]);
+                    currentNodes.RemoveAt(currentNodes.Count - 1);
                 }
-                
-                if (license == null) {
-                    while(!_licenses.TryTake(out license))
+
+                while(currentNodes.Count < 3)
+                {
+                    MyNode node = null;
+                    while(!_cells.TryDequeue(out node))
                     {
+                        ++waitCellCounter;
+                        if (waitCellCounter % 100000 == 0) {
+                            _logger.LogDebug($"Wait cell total count = {waitCellCounter}");
+                        }
                         await Task.Yield();
                     }
+                    currentNodes.Add(node);
                 }
 
-                var dig = new Dig()
                 {
-                    LicenseId = license.Id ?? 0,
-                    PosX = node.Report.Area.PosX,
-                    PosY = node.Report.Area.PosY,
-                    Depth = node.Depth
-                };
+                    MyNode node = null;
 
-                var treasures = await _client.DigAsync(dig);
-
-                node.Depth++;
-                license.DigUsed++;
-
-                if (treasures != null)
-                {
-                    node.Report.Amount -= treasures.Count;
-                    foreach(var treasure in treasures)
+                    if (_cells.TryDequeue(out node))
                     {
-                        _treasures.Add(treasure);
+                        currentNodes.Add(node);
+
+                        while(!_cells.TryDequeue(out node))
+                        {
+                            ++waitCellCounter;
+                            if (waitCellCounter % 100000 == 0) {
+                                _logger.LogDebug($"Wait cell total count = {waitCellCounter}");
+                            }
+                            await Task.Yield();
+                        }
+
+                        currentNodes.Add(node);
                     }
+
                 }
 
-                if (node.Report.Amount > 0 && node.Depth <= 10)
+                switch(currentNodes.Count)
                 {
-                    _cells.Add(node);
+                    case 5:
+                        license = await GetLicenseAsync(myCoins, licenseClient, false);
+                        break;
+                    case 3:
+                        license = await GetLicenseAsync(myCoins, licenseClient, true);
+                        break;
+                    default:
+                        _logger.LogCritical($"Stupid error");
+                        break;
                 }
 
-                if (license.DigUsed >= license.DigAllowed) {
-                    license = null;
+                while (currentNodes.Count > license.DigAllowed)
+                {
+                    _cells.Enqueue(currentNodes[currentNodes.Count - 1]);
+                    currentNodes.RemoveAt(currentNodes.Count - 1);
+                }
+
+
+                var results = await Task.WhenAll(currentNodes.Select(async (node, index) => {
+                    var dig = new Dig()
+                    {
+                        LicenseId = license.Id ?? 0,
+                        PosX = node.Report.Area.PosX,
+                        PosY = node.Report.Area.PosY,
+                        Depth = node.Depth
+                    };
+                    node.Depth++;
+                    var result = await diggerClients[index].DigAsync(dig);
+                    if (result != null) {
+                        node.Report.Amount -= result.Count;
+                    }
+                    return result;
+                }));
+
+                var treasures = results.SelectMany(x => x == null ? Enumerable.Empty<string>() : x);
+
+                currentNodes.RemoveAll(x => x.Depth > 10 || x.Report.Amount <= 0);
+
+                foreach(var treasure in treasures)
+                {
+                    cashTasks.Push(SellAsync(treasure, myCoins, cashClient));
                 }
             }
         }
