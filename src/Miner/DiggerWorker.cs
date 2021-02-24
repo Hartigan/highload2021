@@ -24,16 +24,6 @@ namespace Miner
             _cells = cells;
         }
 
-        private async Task<T> WithRetry<T>(Func<Task<T>> func)
-        {
-            T result = default(T);
-            do
-            {
-                result = await func();
-            } while(result == null);
-            return result;
-        }
-
         private async Task<License> GetLicenseAsync(Stack<int> myCoins, Client client, bool free)
         {
             List<int> coins = _empty;
@@ -46,12 +36,12 @@ namespace Miner
                 }
             }
 
-            return await WithRetry(() => client.BuyLicenseAsync(coins));
+            return await client.BuyLicenseAsync(coins);
         }
 
         private async Task SellAsync(string treasure, Stack<int> myCoins, Client client)
         {
-            List<int> coins = await WithRetry(() => client.CashAsync(treasure));
+            List<int> coins = await client.CashAsync(treasure);
 
             if (myCoins.Count > 100) {
                 return;

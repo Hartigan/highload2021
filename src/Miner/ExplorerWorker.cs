@@ -25,124 +25,113 @@ namespace Miner
             _cells = cells;
         }
 
-        private async Task<Explore> DoRequest(Area area, Client client)
+        private async Task Process()
         {
-            Explore initialReport = null;
-            do
+            var client = _clientFactory.Create();
+            while(true)
             {
-                initialReport = await client.ExploreAsync(area);
-            } while(initialReport == null);
-            return initialReport;
-        }
+                if (_cells.Count > 200){
+                    await Task.Yield();
+                }
 
-        private Task Process()
-        {
-            return Task.Run(async () =>
-            {
-                var client = _clientFactory.Create();
-                while(true)
+                MyNode node = null;
+                while (_queue.Count == 0)
                 {
-                    MyNode node = null;
-                    while (_queue.Count == 0)
+                    await Task.Yield();
+                }
+                lock(_queue)
+                {
+                    if (_queue.Count > 0)
                     {
-                        await Task.Yield();
+                        node = _queue.Dequeue();
                     }
-                    lock(_queue)
+                    else
                     {
-                        if (_queue.Count > 0)
-                        {
-                            node = _queue.Dequeue();
-                        }
-                        else
-                        {
-                            continue;
-                        }
-                    }
-
-                    if (node.IsCell())
-                    {
-                        _cells.Enqueue(node);
                         continue;
                     }
-
-                    Area area1, area2;
-
-                    if (node.Report.Area.SizeX > node.Report.Area.SizeY) {
-                        var div = node.Report.Area.SizeX > 2 ? 3 : 2;
-                        var newSizeX1 = node.Report.Area.SizeX / div;
-                        var newSizeX2 = node.Report.Area.SizeX - newSizeX1;
-                        area1 = new Area() {
-                            PosX = node.Report.Area.PosX,
-                            PosY = node.Report.Area.PosY,
-                            SizeX = newSizeX1,
-                            SizeY = node.Report.Area.SizeY
-                        };
-                        area2 = new Area() {
-                            PosX = node.Report.Area.PosX + newSizeX1,
-                            PosY = node.Report.Area.PosY,
-                            SizeX = newSizeX2,
-                            SizeY = node.Report.Area.SizeY
-                        };
-                    }
-                    else {
-                        var div = node.Report.Area.SizeY > 2 ? 3 : 2;
-                        var newSizeY1 = node.Report.Area.SizeY / div;
-                        var newSizeY2 = node.Report.Area.SizeY - newSizeY1;
-                        area1 = new Area() {
-                            PosX = node.Report.Area.PosX,
-                            PosY = node.Report.Area.PosY,
-                            SizeX = node.Report.Area.SizeX,
-                            SizeY = newSizeY1
-                        };
-                        area2 = new Area() {
-                            PosX = node.Report.Area.PosX,
-                            PosY = node.Report.Area.PosY + newSizeY1,
-                            SizeX = node.Report.Area.SizeX,
-                            SizeY = newSizeY2
-                        };
-                    }
-
-                    Explore report = await DoRequest(area1, client);
-
-                    MyNode node1 = new MyNode() {
-                        Report = new Explore() {
-                            Area = area2,
-                            Amount = node.Report.Amount - report.Amount
-                        }
-                    };
-
-                    MyNode node2 = new MyNode() {
-                        Report = report
-                    };
-
-                    lock(_queue)
-                    {
-                        if (!node1.IsEmpty()) {
-                            _queue.Enqueue(node1, node1.CalculatePriority());
-                        }
-
-                        if (!node2.IsEmpty()) {
-                            _queue.Enqueue(node2, node2.CalculatePriority());
-                        }
-                    }
-                    
                 }
-            });
-        }
 
-        private Task AddInitial(Area area, Client client)
-        {
-            return Task.Run(async () => {
-                var report = await DoRequest(area, client);
-                MyNode node = new MyNode() {
+                if (node.IsCell())
+                {
+                    _cells.Enqueue(node);
+                    continue;
+                }
+
+                Area area1, area2;
+
+                if (node.Report.Area.SizeX > node.Report.Area.SizeY) {
+                    var div = node.Report.Area.SizeX > 2 ? 3 : 2;
+                    var newSizeX1 = node.Report.Area.SizeX / div;
+                    var newSizeX2 = node.Report.Area.SizeX - newSizeX1;
+                    area1 = new Area() {
+                        PosX = node.Report.Area.PosX,
+                        PosY = node.Report.Area.PosY,
+                        SizeX = newSizeX1,
+                        SizeY = node.Report.Area.SizeY
+                    };
+                    area2 = new Area() {
+                        PosX = node.Report.Area.PosX + newSizeX1,
+                        PosY = node.Report.Area.PosY,
+                        SizeX = newSizeX2,
+                        SizeY = node.Report.Area.SizeY
+                    };
+                }
+                else {
+                    var div = node.Report.Area.SizeY > 2 ? 3 : 2;
+                    var newSizeY1 = node.Report.Area.SizeY / div;
+                    var newSizeY2 = node.Report.Area.SizeY - newSizeY1;
+                    area1 = new Area() {
+                        PosX = node.Report.Area.PosX,
+                        PosY = node.Report.Area.PosY,
+                        SizeX = node.Report.Area.SizeX,
+                        SizeY = newSizeY1
+                    };
+                    area2 = new Area() {
+                        PosX = node.Report.Area.PosX,
+                        PosY = node.Report.Area.PosY + newSizeY1,
+                        SizeX = node.Report.Area.SizeX,
+                        SizeY = newSizeY2
+                    };
+                }
+
+                Explore report = await client.ExploreAsync(area1);
+
+                MyNode node1 = new MyNode() {
+                    Report = new Explore() {
+                        Area = area2,
+                        Amount = node.Report.Amount - report.Amount
+                    }
+                };
+
+                MyNode node2 = new MyNode() {
                     Report = report
                 };
 
                 lock(_queue)
                 {
-                    _queue.Enqueue(node, node.CalculatePriority());
+                    if (!node1.IsEmpty()) {
+                        _queue.Enqueue(node1, node1.CalculatePriority());
+                    }
+
+                    if (!node2.IsEmpty()) {
+                        _queue.Enqueue(node2, node2.CalculatePriority());
+                    }
                 }
-            });
+                
+            }
+        }
+
+        private async Task AddInitial(Area area, Client client)
+        {
+            var report = await client.ExploreAsync(area);
+            MyNode node = new MyNode() {
+                Report = report
+            };
+
+            lock(_queue)
+            {
+                _queue.Enqueue(node, node.CalculatePriority());
+            }
         }
 
         public async Task Doit()

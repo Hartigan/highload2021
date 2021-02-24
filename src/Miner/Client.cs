@@ -54,6 +54,24 @@ namespace Miner
             _logger = logger;
         }
 
+        private Task<T> DoRequest<T>(Func<Task<T>> func)
+        {
+            return Task.Run(async () => {
+                T result = default(T);
+                do
+                {
+                    try
+                    {
+                        result = await func();
+                    }
+                    catch(Exception)
+                    {
+                    }
+                } while(result == null);
+                return result;
+            });
+        }
+
         private async Task<T> Parse<T>(HttpContent content)
         {
             using(var stream = await content.ReadAsStreamAsync())
@@ -68,10 +86,9 @@ namespace Miner
         }
 
         private static int _cashFailCounter = 0;
-        public async Task<List<int>> CashAsync(string treasure)
+        public Task<List<int>> CashAsync(string treasure)
         {
-            try
-            {
+            return DoRequest(async () => {
                 using (var request = new HttpRequestMessage(HttpMethod.Post, _baseUrl + "/cash"))
                 {
                     request.Content = ToHttpContent(treasure);
@@ -92,20 +109,14 @@ namespace Miner
                     }
                     
                 }
-            }
-            catch
-            {
-                return null;
-            }
-            
+            });
         }
 
         private static int _licensesTotalFailes = 0;
 
-        public async Task<License> BuyLicenseAsync(List<int> coins)
+        public Task<License> BuyLicenseAsync(List<int> coins)
         {
-            try
-            {
+            return DoRequest(async () => {
                 using (var request = new HttpRequestMessage(HttpMethod.Post, _baseUrl + "/licenses"))
                 {
                     request.Content = ToHttpContent(coins);
@@ -126,14 +137,9 @@ namespace Miner
                         return await Parse<License>(response.Content);
                     }
                 }
-            }
-            catch
-            {
-                return null;
+            });
             }
             
-        }
-
         public async Task<List<License>> GetLicensesAsync()
         {
             using (var request = new HttpRequestMessage(HttpMethod.Get, _baseUrl + "/licenses"))
@@ -152,40 +158,41 @@ namespace Miner
             }
         }
 
-        public async Task<List<string>> DigAsync(Dig dig)
+        public Task<List<string>> DigAsync(Dig dig)
         {
-            donext:
-            try
-            {
-                using (var request = new HttpRequestMessage(HttpMethod.Post, _baseUrl + "/dig"))
+            return Task.Run(async () => {
+                donext:
+                try
                 {
-                    request.Content = ToHttpContent(dig);
-                    using (var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead))
+                    using (var request = new HttpRequestMessage(HttpMethod.Post, _baseUrl + "/dig"))
                     {
-                        if (response.StatusCode != System.Net.HttpStatusCode.OK)
+                        request.Content = ToHttpContent(dig);
+                        using (var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead))
                         {
-                            //var error = await Parse<Error>(response.Content);
-                            //_logger.LogError($"DigAsync Code = {error.Code}, Message = {error.Message}");
-                            return null;
+                            if (response.StatusCode != System.Net.HttpStatusCode.OK)
+                            {
+                                //var error = await Parse<Error>(response.Content);
+                                //_logger.LogError($"DigAsync Code = {error.Code}, Message = {error.Message}");
+                                return null;
+                            }
+
+
+                            return await Parse<List<string>>(response.Content);
                         }
-
-
-                        return await Parse<List<string>>(response.Content);
                     }
                 }
-            }
-            catch
-            {
-                goto donext;
-            }
+                catch
+                {
+                    goto donext;
+                }
+            });
         }
 
         private static int _exploreFailCounter = 0;
 
-        public async Task<Explore> ExploreAsync(Area area)
+        public Task<Explore> ExploreAsync(Area area)
         {
-            try
-            {
+            return DoRequest(async () => {
                 using (var request = new HttpRequestMessage(HttpMethod.Post, _baseUrl + "/explore"))
                 {
                     request.Content = ToHttpContent(area);
@@ -205,12 +212,7 @@ namespace Miner
                         return await Parse<Explore>(response.Content);
                     }
                 }
-            }
-            catch
-            {
-                return null;
-            }
-            
+            });
         }
 
         public async Task<Wallet> GetBalanceAsync()

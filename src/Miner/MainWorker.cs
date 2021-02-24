@@ -33,13 +33,12 @@ namespace Miner
 
         public async Task Doit()
         {
-            _workers.Add(Task.Run(_explorerWorker.Doit));
+            _workers.Add(_explorerWorker.Doit());
 
             await Task.Delay(1000);
 
             for (int i = 0; i < 10; ++i) {
-                
-                _workers.Add(Task.Run(_diggerWorker.Doit));
+                _workers.Add(_diggerWorker.Doit());
             }
 
             await Task.WhenAll(_workers);
