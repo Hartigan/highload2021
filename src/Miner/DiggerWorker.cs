@@ -87,7 +87,7 @@ namespace Miner
                     while(!_cells.TryDequeue(out node))
                     {
                         ++waitCellCounter;
-                        if (waitCellCounter % 100000 == 0) {
+                        if (waitCellCounter % 400000 == 0) {
                             _logger.LogDebug($"Wait cell total count = {waitCellCounter}");
                         }
                         await Task.Yield();
@@ -105,7 +105,7 @@ namespace Miner
                         while(!_cells.TryDequeue(out node))
                         {
                             ++waitCellCounter;
-                            if (waitCellCounter % 100000 == 0) {
+                            if (waitCellCounter % 400000 == 0) {
                                 _logger.LogDebug($"Wait cell total count = {waitCellCounter}");
                             }
                             await Task.Yield();

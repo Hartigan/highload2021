@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Json;
+using System.Net.Sockets;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -44,6 +45,15 @@ namespace Miner
             {
                 PooledConnectionLifetime = TimeSpan.FromMinutes(10),
                 PooledConnectionIdleTimeout = TimeSpan.FromMinutes(5),
+                ConnectCallback = async (ctx, cancellationToken) =>
+                {
+                    var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+                    socket.NoDelay = true;
+                    socket.UseOnlyOverlappedIO = true;
+                    await socket.ConnectAsync(ctx.DnsEndPoint);
+                    var networkStream = new NetworkStream(socket);
+                    return networkStream;
+                }
             };
 
 

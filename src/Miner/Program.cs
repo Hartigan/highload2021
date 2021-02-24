@@ -1,4 +1,6 @@
 ﻿using System;
+using System.Linq;
+using System.Net;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Console;
@@ -15,6 +17,8 @@ namespace Miner
 
         static async Task Doit() {
             string baseUrl = Environment.GetEnvironmentVariable("ADDRESS");
+            baseUrl = Dns.GetHostEntry(baseUrl).AddressList.First(x => x.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork).ToString();
+            System.Console.WriteLine("address: " + baseUrl);
 
             var factory = LoggerFactory.Create(builder => {
                 builder.AddConsole(opt => {
