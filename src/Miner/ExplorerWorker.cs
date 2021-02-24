@@ -31,7 +31,10 @@ namespace Miner
             while(true)
             {
                 if (_cells.Count > 200){
-                    await Task.Yield();
+                    while (_cells.Count > 60)
+                    {
+                        await Task.Yield();
+                    }
                 }
 
                 MyNode node = null;
