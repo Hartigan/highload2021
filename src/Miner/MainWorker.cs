@@ -11,37 +11,33 @@ namespace Miner
     {
         private readonly DiggerWorker _diggerWorker;
         private readonly ExplorerWorker _explorerWorker;
-        private readonly ConcurrentQueue<MyNode> _cells = new ConcurrentQueue<MyNode>();
         public MainWorker(
             ILoggerFactory loggerFactory,
             ClientFactory clientFactory)
         {
             var logger = loggerFactory.CreateLogger<MainWorker>();
+            _explorerWorker = new ExplorerWorker(
+                clientFactory,
+                loggerFactory.CreateLogger<ExplorerWorker>()
+            );
             _diggerWorker = new DiggerWorker(
                 clientFactory,
                 loggerFactory.CreateLogger<DiggerWorker>(),
-                _cells);
-            _explorerWorker = new ExplorerWorker(
-                clientFactory,
-                loggerFactory.CreateLogger<ExplorerWorker>(),
-                _cells
+                _explorerWorker
             );
+            
         }
 
 
         private List<Task> _workers = new List<Task>();
 
-        public async Task Doit()
+        public Task Doit()
         {
-            _workers.Add(_explorerWorker.Doit());
-
-            await Task.Delay(1000);
-
             for (int i = 0; i < 10; ++i) {
                 _workers.Add(_diggerWorker.Doit());
             }
 
-            await Task.WhenAll(_workers);
+            return Task.WhenAll(_workers);
         }
     }
 }

@@ -5,179 +5,163 @@ using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Miner.Models;
-using Priority_Queue;
 
 namespace Miner
 {
     public class ExplorerWorker
     {
-        private readonly ClientFactory _clientFactory;
+        private readonly Client _client;
         private readonly ILogger<ExplorerWorker> _logger;
-        private readonly FastPriorityQueue<MyNode> _queue = new FastPriorityQueue<MyNode>(100000);
-        private readonly ConcurrentQueue<MyNode> _cells;
+        private readonly ConcurrentBag<Area> _areas = new ConcurrentBag<Area>();
         public ExplorerWorker(
             ClientFactory clientFactory,
-            ILogger<ExplorerWorker> logger,
-            ConcurrentQueue<MyNode> cells)
+            ILogger<ExplorerWorker> logger)
         {
-            _clientFactory = clientFactory;
+            _client = clientFactory.Create();
             _logger = logger;
-            _cells = cells;
+
+            int size = 3500;
+
+            int stepX = 3;
+            int stepY = 5;
+
+            var areas = new List<Area>(size * size / (stepX * stepY));
+            
+
+            for(int x = 0; x< size/stepX; ++x) {
+                for(int y = 0; y < size/stepY;++y) {
+                    var area = new Area() {
+                        PosX = x*stepX,
+                        PosY = y*stepY,
+                        SizeX = stepX,
+                        SizeY = stepY
+                    };
+
+                    areas.Add(area);
+                }
+            }
+
+            Random rng = new Random();
+            foreach(var a in areas.OrderBy(x => rng.Next()))
+            {
+                _areas.Add(a);
+            }
         }
 
-        private async Task Process()
+        private List<Area> Split(Area a)
         {
-            var client = _clientFactory.Create();
-            while(true)
+            Area area1, area2;
+
+            if (a.SizeX > a.SizeY) {
+                var div = 2;
+                var newSizeX1 = a.SizeX / div;
+                var newSizeX2 = a.SizeX - newSizeX1;
+                area1 = new Area() {
+                    PosX = a.PosX,
+                    PosY = a.PosY,
+                    SizeX = newSizeX1,
+                    SizeY = a.SizeY
+                };
+                area2 = new Area() {
+                    PosX = a.PosX + newSizeX1,
+                    PosY = a.PosY,
+                    SizeX = newSizeX2,
+                    SizeY = a.SizeY
+                };
+            }
+            else {
+                var div = 2;
+                var newSizeY1 = a.SizeY / div;
+                var newSizeY2 = a.SizeY - newSizeY1;
+                area1 = new Area() {
+                    PosX = a.PosX,
+                    PosY = a.PosY,
+                    SizeX = a.SizeX,
+                    SizeY = newSizeY1
+                };
+                area2 = new Area() {
+                    PosX = a.PosX,
+                    PosY = a.PosY + newSizeY1,
+                    SizeX = a.SizeX,
+                    SizeY = newSizeY2
+                };
+            }
+
+            return new List<Area>(){ area1, area2 };
+        }
+
+        private async Task<List<MyNode>> ProcessNode(MyNode node)
+        {
+            var areas = Split(node.Report.Area);
+
+            var requestedReport = await _client.ExploreAsync(areas[0]);
+            var generatedReport = new Explore()
             {
-                if (_cells.Count > 200){
-                    while (_cells.Count > 60)
-                    {
-                        await Task.Yield();
-                    }
+                Area = areas[1],
+                Amount = node.Report.Amount - requestedReport.Amount
+            };
+
+            List<MyNode> cells = new List<MyNode>();
+            List<MyNode> newNodes = new List<MyNode>();
+            var n1 = new MyNode() { Report = requestedReport };
+            var n2 = new MyNode() { Report = generatedReport };
+
+            if (!n1.IsEmpty())
+            {
+                if (n1.IsCell())
+                {
+                    cells.Add(n1);
+                }
+                else
+                {
+                    newNodes.Add(n1);
+                }
+            }
+
+            if (!n2.IsEmpty())
+            {
+                if (n2.IsCell())
+                {
+                    cells.Add(n2);
+                }
+                else
+                {
+                    newNodes.Add(n2);
+                }
+            }
+
+            var newCells = await Task.WhenAll(newNodes.Select(ProcessNode));
+            cells.AddRange(newCells.SelectMany(x => x));
+
+            return cells;
+        }
+
+        public async Task FindCells(List<MyNode> cells, int count)
+        {
+            while(cells.Count < count)
+            {
+                Area area = null;
+                if (!_areas.TryTake(out area))
+                {
+                    _logger.LogDebug("Impossible");
                 }
 
-                MyNode node = null;
-                while (_queue.Count == 0)
-                {
-                    await Task.Yield();
-                }
-                lock(_queue)
-                {
-                    if (_queue.Count > 0)
-                    {
-                        node = _queue.Dequeue();
-                    }
-                    else
-                    {
-                        continue;
-                    }
-                }
+                var report = await _client.ExploreAsync(area);
 
-                if (node.IsCell())
+                if (report.Amount == 0)
                 {
-                    _cells.Enqueue(node);
                     continue;
                 }
 
-                Area area1, area2;
-
-                if (node.Report.Area.SizeX > node.Report.Area.SizeY) {
-                    var div = node.Report.Area.SizeX > 2 ? 3 : 2;
-                    var newSizeX1 = node.Report.Area.SizeX / div;
-                    var newSizeX2 = node.Report.Area.SizeX - newSizeX1;
-                    area1 = new Area() {
-                        PosX = node.Report.Area.PosX,
-                        PosY = node.Report.Area.PosY,
-                        SizeX = newSizeX1,
-                        SizeY = node.Report.Area.SizeY
-                    };
-                    area2 = new Area() {
-                        PosX = node.Report.Area.PosX + newSizeX1,
-                        PosY = node.Report.Area.PosY,
-                        SizeX = newSizeX2,
-                        SizeY = node.Report.Area.SizeY
-                    };
-                }
-                else {
-                    var div = node.Report.Area.SizeY > 2 ? 3 : 2;
-                    var newSizeY1 = node.Report.Area.SizeY / div;
-                    var newSizeY2 = node.Report.Area.SizeY - newSizeY1;
-                    area1 = new Area() {
-                        PosX = node.Report.Area.PosX,
-                        PosY = node.Report.Area.PosY,
-                        SizeX = node.Report.Area.SizeX,
-                        SizeY = newSizeY1
-                    };
-                    area2 = new Area() {
-                        PosX = node.Report.Area.PosX,
-                        PosY = node.Report.Area.PosY + newSizeY1,
-                        SizeX = node.Report.Area.SizeX,
-                        SizeY = newSizeY2
-                    };
-                }
-
-                Explore report = await client.ExploreAsync(area1);
-
-                MyNode node1 = new MyNode() {
-                    Report = new Explore() {
-                        Area = area2,
-                        Amount = node.Report.Amount - report.Amount
-                    }
-                };
-
-                MyNode node2 = new MyNode() {
+                var node = new MyNode()
+                {
                     Report = report
                 };
 
-                lock(_queue)
-                {
-                    if (!node1.IsEmpty()) {
-                        _queue.Enqueue(node1, node1.CalculatePriority());
-                    }
+                var newCells = await ProcessNode(node);
 
-                    if (!node2.IsEmpty()) {
-                        _queue.Enqueue(node2, node2.CalculatePriority());
-                    }
-                }
-                
+                cells.AddRange(newCells);
             }
-        }
-
-        private async Task AddInitial(Area area, Client client)
-        {
-            var report = await client.ExploreAsync(area);
-            MyNode node = new MyNode() {
-                Report = report
-            };
-
-            lock(_queue)
-            {
-                _queue.Enqueue(node, node.CalculatePriority());
-            }
-        }
-
-        public async Task Doit()
-        {
-
-            Client client = _clientFactory.Create();
-
-            List<Task> tasks = new List<Task>(100);
-
-            for(int x = 0; x< 5; ++x) {
-                for(int y = 0; y < 5;++y) {
-                    var area = new Area() {
-                        PosX = x*700,
-                        PosY = y*700,
-                        SizeX = 700,
-                        SizeY = 700
-                    };
-
-                    tasks.Add(AddInitial(area, client));
-                    
-                }
-            }
-
-            tasks.Add(Process());
-            tasks.Add(Process());
-            tasks.Add(Process());
-            tasks.Add(Process());
-            tasks.Add(Process());
-            tasks.Add(Process());
-            tasks.Add(Process());
-            tasks.Add(Process());
-            tasks.Add(Process());
-            tasks.Add(Process());
-            tasks.Add(Process());
-            tasks.Add(Process());
-            tasks.Add(Process());
-            tasks.Add(Process());
-            tasks.Add(Process());
-            tasks.Add(Process());
-            tasks.Add(Process());
-            tasks.Add(Process());
-
-            await Task.WhenAll(tasks);
         }
     }
 }

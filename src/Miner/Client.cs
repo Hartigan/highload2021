@@ -168,6 +168,8 @@ namespace Miner
             }
         }
 
+        private readonly List<string> _empty = new List<string>(0);
+
         public Task<List<string>> DigAsync(Dig dig)
         {
             return Task.Run(async () => {
@@ -181,6 +183,11 @@ namespace Miner
                         {
                             if (response.StatusCode != System.Net.HttpStatusCode.OK)
                             {
+                                if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+                                {
+                                    return _empty;
+                                }
+
                                 //var error = await Parse<Error>(response.Content);
                                 //_logger.LogError($"DigAsync Code = {error.Code}, Message = {error.Message}");
                                 return null;

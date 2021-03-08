@@ -12,67 +12,80 @@ namespace Miner
     {
         private readonly ClientFactory _clientFactory;
         private readonly ILogger<DiggerWorker> _logger;
-        private readonly ConcurrentQueue<MyNode> _cells;
+        private readonly ExplorerWorker _explorerWorker;
         private readonly List<int> _empty = new List<int>();
         public DiggerWorker(
             ClientFactory clientFactory,
             ILogger<DiggerWorker> logger,
-            ConcurrentQueue<MyNode> cells)
+            ExplorerWorker explorerWorker)
         {
             _clientFactory = clientFactory;
             _logger = logger;
-            _cells = cells;
+            _explorerWorker = explorerWorker;
         }
 
-        private Task<License> GetLicenseAsync(ConcurrentBag<int> myCoins, Client client)
+        enum LicenseType
+        {
+            One,
+            Six,
+            Eleven,
+            TwentyOne
+        }
+
+        private Task<License> GetLicenseAsync(ConcurrentBag<int> myCoins, Client client, LicenseType type)
         {
             List<int> coins = _empty;
 
             if (myCoins.Count > 0)
             {
                 coins = new List<int>();
-                // if (myCoins.Count > 21)
-                // {
-                //     for(int i = 0; i < 21; ++i)
-                //     {
-                //         int c = 0;
-                //         if (!myCoins.TryTake(out c))
-                //         {
-                //             _logger.LogDebug("buy license wtf 21");
-                //         }
-                //         coins.Add(c);
-                //     }
-                // }
-                // else if (myCoins.Count > 11)
-                // {
-                //     for(int i = 0; i < 11; ++i)
-                //     {
-                //         int c = 0;
-                //         if (!myCoins.TryTake(out c))
-                //         {
-                //             _logger.LogDebug("buy license wtf 11");
-                //         }
-                //         coins.Add(c);
-                //     }
-                // }
-                // else if (myCoins.Count > 6)
-                // {
-                //     for(int i = 0; i < 6; ++i)
-                //     {
-                //         int c = 0;
-                //         if (!myCoins.TryTake(out c))
-                //         {
-                //             _logger.LogDebug("buy license wtf 6");
-                //         }
-                //         coins.Add(c);
-                //     }
-                // }
-                // else
+                int count = 0;
+                switch(type)
+                {
+                    case LicenseType.TwentyOne:
+                        if (myCoins.Count >= 21)
+                        {
+                            count = 21;
+                        }
+                        else
+                        {
+                            return GetLicenseAsync(myCoins, client, LicenseType.Eleven);
+                        }
+                        break;
+                    case LicenseType.Eleven:
+                        if (myCoins.Count >= 11)
+                        {
+                            count = 11;
+                        }
+                        else
+                        {
+                            return GetLicenseAsync(myCoins, client, LicenseType.Six);
+                        }
+                        break;
+                    case LicenseType.Six:
+                        if (myCoins.Count >= 6)
+                        {
+                            count = 6;
+                        }
+                        else
+                        {
+                            return GetLicenseAsync(myCoins, client, LicenseType.One);
+                        }
+                        break;
+                    case LicenseType.One:
+                        if (myCoins.Count >= 1)
+                        {
+                            count = 1;
+                        }
+                        break;
+                }
+                
+                for(int i = 0; i < count; ++i)
                 {
                     int c = 0;
                     if (!myCoins.TryTake(out c))
                     {
-                        _logger.LogDebug("buy license wtf 1");
+                        _logger.LogDebug("buy license wtf");
                     }
                     coins.Add(c);
                 }
@@ -104,32 +117,32 @@ namespace Miner
             Client cashClient = _clientFactory.Create();
             Client client = _clientFactory.Create();
 
-            int waitCellCounter = 0;
+            List<MyNode> currentNodes = new List<MyNode>();
+            List<MyNode> deepNodes = new List<MyNode>();
 
-            List<MyNode> currentNodes = new List<MyNode>(5);
-            
             while(true) {
 
-                License license = await GetLicenseAsync(myCoins, client);
-
-                while(currentNodes.Count < license.DigAllowed)
+                License license = null;
+                List<MyNode> nodes = null;
+                if (deepNodes.Count >= 5)
                 {
-                    MyNode node = null;
-                    while(!_cells.TryDequeue(out node))
+                    nodes = deepNodes;
+                    license = await GetLicenseAsync(myCoins, client, LicenseType.One);
+                }
+                else
+                {
+                    nodes = currentNodes;
+                    license = await GetLicenseAsync(myCoins, client, LicenseType.One);
+
+                    if (nodes.Count < license.DigAllowed)
                     {
-                        ++waitCellCounter;
-                        if (waitCellCounter % 400000 == 0) {
-                            //_logger.LogDebug($"Wait cell total count = {waitCellCounter}");
-                            //var c = String.Join(" ", counts);
-                            //_logger.LogDebug(c);
-                        }
-                        await Task.Yield();
+                        await _explorerWorker.FindCells(nodes, license.DigAllowed);
                     }
-                    currentNodes.Add(node);
                 }
 
+
                 var results = await Task.WhenAll(
-                    currentNodes
+                    nodes
                         .Take(license.DigAllowed)
                         .Select(node => new Dig()
                             {
@@ -143,14 +156,20 @@ namespace Miner
 
                 for(int i = 0; i < results.Length; ++i)
                 {
-                    counts[currentNodes[i].Depth - 1] += results[i].Count;
-                    currentNodes[i].Depth++;
-                    currentNodes[i].Report.Amount -= results[i].Count;
+                    counts[nodes[i].Depth - 1] += results[i].Count;
+                    nodes[i].Depth++;
+                    nodes[i].Report.Amount -= results[i].Count;
                 }
 
                 var treasures = results.SelectMany(x => x);
 
-                currentNodes.RemoveAll(x => x.Depth > 10 || x.Report.Amount <= 0);
+                nodes.RemoveAll(x => x.Depth > 10 || x.Report.Amount <= 0);
+
+                if (nodes == currentNodes)
+                {
+                    deepNodes.AddRange(currentNodes.Where(x => x.Report.Amount > 7));
+                    currentNodes.RemoveAll(x => x.Report.Amount > 7);
+                }
 
                 foreach(var treasure in treasures)
                 {
