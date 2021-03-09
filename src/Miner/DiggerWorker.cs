@@ -93,9 +93,12 @@ namespace Miner
             return client.BuyLicenseAsync(coins);
         }
 
+        private int _pendingTreasures = 0;
+
         private async Task SellAsync(string treasure, ConcurrentBag<int> myCoins, Client client)
         {
             List<int> coins = await client.CashAsync(treasure);
+            System.Threading.Interlocked.Decrement(ref _pendingTreasures);
 
             if (myCoins.Count > 1000) {
                 return;
@@ -105,6 +108,15 @@ namespace Miner
                 myCoins.Add(coin);
             }
         }
+
+        public async Task CheckTreasures()
+        {
+            while(true)
+            {
+                await Task.Delay(30000);
+                _logger.LogDebug($"Pending treasures: {_pendingTreasures}");
+            }
+        } 
 
         public async Task Doit()
         {
@@ -124,10 +136,10 @@ namespace Miner
 
                 License license = null;
                 List<MyNode> nodes = null;
-                if (deepNodes.Count >= 5)
+                if (deepNodes.Count >= 50)
                 {
                     nodes = deepNodes;
-                    license = await GetLicenseAsync(myCoins, client, LicenseType.One);
+                    license = await GetLicenseAsync(myCoins, client, LicenseType.TwentyOne);
                 }
                 else
                 {
@@ -167,10 +179,11 @@ namespace Miner
 
                 if (nodes == currentNodes)
                 {
-                    deepNodes.AddRange(currentNodes.Where(x => x.Report.Amount > 7));
-                    currentNodes.RemoveAll(x => x.Report.Amount > 7);
+                    deepNodes.AddRange(currentNodes.Where(x => x.Report.Amount > 5));
+                    currentNodes.RemoveAll(x => x.Report.Amount > 5);
                 }
 
+                System.Threading.Interlocked.Add(ref _pendingTreasures, treasures.Count());
                 foreach(var treasure in treasures)
                 {
                     cashTasks.Push(SellAsync(treasure, myCoins, cashClient));

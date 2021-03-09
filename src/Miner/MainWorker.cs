@@ -33,6 +33,7 @@ namespace Miner
 
         public Task Doit()
         {
+            _workers.Add(_diggerWorker.CheckTreasures());
             for (int i = 0; i < 10; ++i) {
                 _workers.Add(_diggerWorker.Doit());
             }
