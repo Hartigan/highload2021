@@ -24,8 +24,9 @@ namespace Miner
             _explorerWorker = explorerWorker;
         }
 
-        enum LicenseType
+        public enum LicenseType
         {
+            Free,
             One,
             Six,
             Eleven,
@@ -95,9 +96,21 @@ namespace Miner
 
         private int _pendingTreasures = 0;
 
-        private async Task SellAsync(string treasure, ConcurrentBag<int> myCoins, Client client)
+        class Treasure
         {
-            List<int> coins = await client.CashAsync(treasure);
+            public string Value { get; set; }
+            public int Depth { get; set; }
+        }
+
+        private int[] _treasureCoins = new int[10];
+        private int[] _treasureCounts = new int[10];
+
+        private async Task SellAsync(Treasure treasure, ConcurrentBag<int> myCoins, Client client)
+        {
+            List<int> coins = await client.CashAsync(treasure.Value);
+
+            _treasureCoins[treasure.Depth - 1] += coins.Count;
+            _treasureCounts[treasure.Depth - 1]++;
             System.Threading.Interlocked.Decrement(ref _pendingTreasures);
 
             if (myCoins.Count > 1000) {
@@ -114,44 +127,42 @@ namespace Miner
             while(true)
             {
                 await Task.Delay(30000);
-                _logger.LogDebug($"Pending treasures: {_pendingTreasures}");
+                float[] s = new float[10];
+                for(int i = 0; i < 10; i++)
+                {
+                    s[i] = _treasureCoins[i] * 1.0f / _treasureCounts[i];
+                }
+                _logger.LogDebug($"P: {_pendingTreasures}, S: {s[0]:F2} {s[1]:F2} {s[2]:F2} {s[3]:F2} {s[4]:F2} {s[5]:F2} {s[6]:F2} {s[7]:F2} {s[8]:F2} {s[9]:F2}");
             }
         } 
 
-        public async Task Doit()
+        private void MoveNodes(List<MyNode> source, List<MyNode> destination, int depth)
+        {
+            destination.AddRange(source.Where(x => x.Depth > depth));
+            source.RemoveAll(x => x.Depth > depth);
+        }
+
+        public async Task Doit(LicenseType licenseType)
         {
             ConcurrentBag<int> myCoins = new ConcurrentBag<int>();
             Stack<Task> cashTasks = new Stack<Task>();
 
             int[] counts = new int[10];
 
-            Client licenseClient = _clientFactory.Create();
-            Client cashClient = _clientFactory.Create();
             Client client = _clientFactory.Create();
 
-            List<MyNode> currentNodes = new List<MyNode>();
-            List<MyNode> deepNodes = new List<MyNode>();
+            List<MyNode> nodes = new List<MyNode>();
+
+            List<Treasure> treasures = new List<Treasure>();
 
             while(true) {
 
-                License license = null;
-                List<MyNode> nodes = null;
-                if (deepNodes.Count >= 50)
-                {
-                    nodes = deepNodes;
-                    license = await GetLicenseAsync(myCoins, client, LicenseType.TwentyOne);
-                }
-                else
-                {
-                    nodes = currentNodes;
-                    license = await GetLicenseAsync(myCoins, client, LicenseType.One);
+                License license = await GetLicenseAsync(myCoins, client, licenseType);
 
-                    if (nodes.Count < license.DigAllowed)
-                    {
-                        await _explorerWorker.FindCells(nodes, license.DigAllowed);
-                    }
+                if (nodes.Count < license.DigAllowed)
+                {
+                    await _explorerWorker.FindCells(nodes, license.DigAllowed);
                 }
-
 
                 var results = await Task.WhenAll(
                     nodes
@@ -166,27 +177,31 @@ namespace Miner
                         .Select(client.DigAsync));
 
 
+                treasures.Clear();
                 for(int i = 0; i < results.Length; ++i)
                 {
+                    if (results[i].Count > 0)
+                    {
+                        foreach(var treasure in results[i])
+                        {
+                            treasures.Add(new Treasure() {
+                                Value = treasure,
+                                Depth = nodes[i].Depth
+                            });
+                        }
+                    }
+
                     counts[nodes[i].Depth - 1] += results[i].Count;
                     nodes[i].Depth++;
                     nodes[i].Report.Amount -= results[i].Count;
                 }
 
-                var treasures = results.SelectMany(x => x);
-
                 nodes.RemoveAll(x => x.Depth > 10 || x.Report.Amount <= 0);
-
-                if (nodes == currentNodes)
-                {
-                    deepNodes.AddRange(currentNodes.Where(x => x.Report.Amount > 5));
-                    currentNodes.RemoveAll(x => x.Report.Amount > 5);
-                }
 
                 System.Threading.Interlocked.Add(ref _pendingTreasures, treasures.Count());
                 foreach(var treasure in treasures)
                 {
-                    cashTasks.Push(SellAsync(treasure, myCoins, cashClient));
+                    cashTasks.Push(SellAsync(treasure, myCoins, client));
                 }
             }
         }

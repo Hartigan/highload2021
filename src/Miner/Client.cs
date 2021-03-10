@@ -115,7 +115,7 @@ namespace Miner
                             return null;
                         }
 
-                        return await Parse<List<int>>(response.Content);
+                        return await response.Content.ReadFromJsonAsync<List<int>>();
                     }
                     
                 }
@@ -144,7 +144,7 @@ namespace Miner
                             return null;
                         }
 
-                        return await Parse<License>(response.Content);
+                        return await response.Content.ReadFromJsonAsync<License>();
                     }
                 }
             });
@@ -163,12 +163,29 @@ namespace Miner
                         return null;
                     }
 
-                    return await Parse<List<License>>(response.Content);
+                    return await response.Content.ReadFromJsonAsync<List<License>>();
                 }
             }
         }
 
         private readonly List<string> _empty = new List<string>(0);
+
+        private TimeSpan[] _digTimings = new TimeSpan[10];
+        private int[] _digCounts = new int[10];
+
+        public async Task PrintStats()
+        {
+            while(true)
+            {
+                await Task.Delay(30000);
+                double[] f = new double[10];
+                for(int i = 0 ; i < 10; ++i)
+                {
+                    f[i] = _digTimings[i].TotalMilliseconds / _digCounts[i];
+                }
+                _logger.LogDebug($"DR: {f[0]:F2} {f[1]:F2} {f[2]:F2} {f[3]:F2} {f[4]:F2} {f[5]:F2} {f[6]:F2} {f[7]:F2} {f[8]:F2} {f[9]:F2}");
+            }
+        }
 
         public Task<List<string>> DigAsync(Dig dig)
         {
@@ -179,12 +196,17 @@ namespace Miner
                     using (var request = new HttpRequestMessage(HttpMethod.Post, _baseUrl + "/dig"))
                     {
                         request.Content = ToHttpContent(dig);
+                        System.Diagnostics.Stopwatch sw = new System.Diagnostics.Stopwatch();
+                        sw.Start();
                         using (var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead))
                         {
                             if (response.StatusCode != System.Net.HttpStatusCode.OK)
                             {
                                 if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
                                 {
+                                    sw.Stop();
+                                    _digTimings[dig.Depth - 1] += sw.Elapsed;
+                                    _digCounts[dig.Depth - 1]++;
                                     return _empty;
                                 }
 
@@ -193,8 +215,10 @@ namespace Miner
                                 return null;
                             }
 
-
-                            return await Parse<List<string>>(response.Content);
+                            sw.Stop();
+                            _digTimings[dig.Depth - 1] += sw.Elapsed;
+                            _digCounts[dig.Depth - 1]++;
+                            return await response.Content.ReadFromJsonAsync<List<string>>();
                         }
                     }
                 }
@@ -226,7 +250,7 @@ namespace Miner
                             return null;
                         }
 
-                        return await Parse<Explore>(response.Content);
+                        return await response.Content.ReadFromJsonAsync<Explore>();
                     }
                 }
             });
