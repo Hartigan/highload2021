@@ -22,8 +22,10 @@ namespace Miner
 
             int size = 3500;
 
-            int stepX = 3;
-            int stepY = 5;
+            int stepX = 1;
+            int stepY = 7;
+
+            Console.WriteLine($"Steps: x - {stepX}, y - {stepY}");
 
             var areas = new List<Area>(size * size / (stepX * stepY));
             
@@ -138,29 +140,32 @@ namespace Miner
 
         public async Task FindCells(List<MyNode> cells, int count)
         {
+            List<Area> areas = new List<Area>(count - cells.Count);
             while(cells.Count < count)
             {
-                Area area = null;
-                if (!_areas.TryTake(out area))
+                areas.Clear();
+                while(areas.Count < (count - cells.Count) * 16)
                 {
-                    _logger.LogDebug("Impossible");
+                    Area area = null;
+                    if (_areas.TryTake(out area))
+                    {
+                        areas.Add(area);
+                    }
                 }
 
-                var report = await _client.ExploreAsync(area);
+                var newCells = await Task.WhenAll(areas.Select(async area => {
+                    var report = await _client.ExploreAsync(area);
+                    if (report.Amount == 0)
+                    {
+                        return Enumerable.Empty<MyNode>();
+                    }
 
-                if (report.Amount == 0)
-                {
-                    continue;
-                }
+                    return await ProcessNode(new MyNode() {
+                        Report = report
+                    });
+                }));
 
-                var node = new MyNode()
-                {
-                    Report = report
-                };
-
-                var newCells = await ProcessNode(node);
-
-                cells.AddRange(newCells);
+                cells.AddRange(newCells.SelectMany(x => x));
             }
         }
     }

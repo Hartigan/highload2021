@@ -35,6 +35,7 @@ namespace Miner
 
         private void AddDiggers(List<Task> tasks, DiggerWorker.LicenseType licenseType, int count)
         {
+            System.Console.WriteLine($"L: {licenseType}, C: {count}");
             for (int i = 0; i < count; ++i) {
                 tasks.Add(_diggerWorker.Doit(licenseType));
             }
@@ -45,6 +46,7 @@ namespace Miner
             _workers.Add(_client.PrintStats());
             _workers.Add(_diggerWorker.CheckTreasures());
 
+            AddDiggers(_workers, DiggerWorker.LicenseType.Free, 0);
             AddDiggers(_workers, DiggerWorker.LicenseType.One, 10);
             AddDiggers(_workers, DiggerWorker.LicenseType.Six, 0);
             AddDiggers(_workers, DiggerWorker.LicenseType.Eleven, 0);

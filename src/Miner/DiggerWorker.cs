@@ -98,6 +98,8 @@ namespace Miner
 
         class Treasure
         {
+            public int PosX { get; set; }
+            public int PosY { get; set; }
             public string Value { get; set; }
             public int Depth { get; set; }
         }
@@ -126,7 +128,7 @@ namespace Miner
         {
             while(true)
             {
-                await Task.Delay(30000);
+                await Task.Delay(15000);
                 float[] s = new float[10];
                 for(int i = 0; i < 10; i++)
                 {
@@ -145,7 +147,7 @@ namespace Miner
         public async Task Doit(LicenseType licenseType)
         {
             ConcurrentBag<int> myCoins = new ConcurrentBag<int>();
-            Stack<Task> cashTasks = new Stack<Task>();
+            List<Task> cashTasks = new List<Task>();
 
             int[] counts = new int[10];
 
@@ -154,6 +156,8 @@ namespace Miner
             List<MyNode> nodes = new List<MyNode>();
 
             List<Treasure> treasures = new List<Treasure>();
+
+            List<Treasure> toCash = new List<Treasure>();
 
             while(true) {
 
@@ -186,7 +190,9 @@ namespace Miner
                         {
                             treasures.Add(new Treasure() {
                                 Value = treasure,
-                                Depth = nodes[i].Depth
+                                Depth = nodes[i].Depth,
+                                PosX = nodes[i].Report.Area.PosX,
+                                PosY = nodes[i].Report.Area.PosY
                             });
                         }
                     }
@@ -198,12 +204,24 @@ namespace Miner
 
                 nodes.RemoveAll(x => x.Depth > 10 || x.Report.Amount <= 0);
 
-                System.Threading.Interlocked.Add(ref _pendingTreasures, treasures.Count());
-                foreach(var treasure in treasures)
-                {
-                    cashTasks.Push(SellAsync(treasure, myCoins, client));
-                }
+                const int limit = 3;
+
+                toCash.Clear();
+                toCash.AddRange(
+                    treasures
+                        .Where(x => (x.Depth < limit && myCoins.Count < 20) || x.Depth >= limit)
+                );
+                System.Threading.Interlocked.Add(ref _pendingTreasures, toCash.Count());
+                
+                cashTasks.Add(
+                    Task.WhenAll(
+                        toCash
+                            .Select(x => SellAsync(x, myCoins, client))
+                    )
+                );
             }
+
+            await Task.WhenAll(cashTasks);
         }
     }
 }
