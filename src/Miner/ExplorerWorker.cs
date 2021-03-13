@@ -13,6 +13,9 @@ namespace Miner
         private readonly Client _client;
         private readonly ILogger<ExplorerWorker> _logger;
         private readonly ConcurrentBag<Area> _areas = new ConcurrentBag<Area>();
+
+        const int stepX = 3;
+        const int stepY = 5;
         public ExplorerWorker(
             ClientFactory clientFactory,
             ILogger<ExplorerWorker> logger)
@@ -21,9 +24,6 @@ namespace Miner
             _logger = logger;
 
             int size = 3500;
-
-            int stepX = 1;
-            int stepY = 7;
 
             Console.WriteLine($"Steps: x - {stepX}, y - {stepY}");
 
@@ -48,6 +48,11 @@ namespace Miner
             {
                 _areas.Add(a);
             }
+
+            for(int i = 1; i < requestsCount.Length; ++i)
+            {
+                GetRequestsCount(i);
+            }
         }
 
         private List<Area> Split(Area a)
@@ -55,7 +60,7 @@ namespace Miner
             Area area1, area2;
 
             if (a.SizeX > a.SizeY) {
-                var div = 2;
+                var div = a.SizeX > 2 ? 3 : 2;
                 var newSizeX1 = a.SizeX / div;
                 var newSizeX2 = a.SizeX - newSizeX1;
                 area1 = new Area() {
@@ -72,7 +77,7 @@ namespace Miner
                 };
             }
             else {
-                var div = 2;
+                var div = a.SizeY > 2 ? 3 : 2;
                 var newSizeY1 = a.SizeY / div;
                 var newSizeY2 = a.SizeY - newSizeY1;
                 area1 = new Area() {
@@ -138,13 +143,85 @@ namespace Miner
             return cells;
         }
 
+        private double Combinations(int n, int k)
+        {
+            double r = 1;
+
+            for(int i = 1; i <= n; ++i)
+            {
+                r *= i;
+                if (i <= k)
+                {
+                    r /= i;
+                }
+
+                if (i <= (n - k))
+                {
+                    r /= i;
+                }
+            }
+
+            return r;
+        }
+
+        private double Bernoulli(int n, int k)
+        {
+            const double p = 0.04;
+            return Combinations(n, k) * Math.Pow(p, k) * Math.Pow(1 - p, n - k);
+        }
+
+        private int[] requestsCount = new int[50];
+
+        private int GetRequestsCount(int k)
+        {
+            if (requestsCount[k] > 0)
+            {
+                return requestsCount[k];
+            }
+
+            const int blockSize = stepX * stepY;
+            const double confidence = 0.95;
+            const double precision = 0.001;
+
+            double currentConfidence = 0;
+            int currentN = k;
+
+            do
+            {
+                currentN++;
+                currentConfidence = 0;
+                for(int i = k; i <= currentN; ++i)
+                {
+                    double b = Bernoulli(currentN, i);
+
+                    currentConfidence += b;
+                    if (b < precision)
+                    {
+                        break;
+                    }
+                }
+            }
+            while(currentConfidence < confidence);
+
+            if (currentN % blockSize == 0)
+            {
+                requestsCount[k] = currentN / blockSize;
+            }
+            else
+            {
+                requestsCount[k] = currentN / blockSize + 1;
+            }
+
+            return requestsCount[k];
+        }
+
         public async Task FindCells(List<MyNode> cells, int count)
         {
             List<Area> areas = new List<Area>(count - cells.Count);
             while(cells.Count < count)
             {
                 areas.Clear();
-                while(areas.Count < (count - cells.Count) * 16)
+                while(areas.Count < GetRequestsCount(count - cells.Count))
                 {
                     Area area = null;
                     if (_areas.TryTake(out area))
