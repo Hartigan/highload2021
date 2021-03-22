@@ -144,7 +144,33 @@ namespace Miner
             source.RemoveAll(x => x.Depth > depth);
         }
 
-        public async Task Doit(LicenseType licenseType)
+        private LicenseType GetLicenseType(Random rng, double[] w)
+        {
+            var v = rng.NextDouble();
+
+            if (v < w[0])
+            {
+                return LicenseType.Free;
+            }
+            else if (v < w[1])
+            {
+                return LicenseType.One;
+            }
+            else if (v < w[2])
+            {
+                return LicenseType.Six;
+            }
+            else if (v < w[3])
+            {
+                return LicenseType.Eleven;
+            }
+            else
+            {
+                return LicenseType.TwentyOne;
+            }
+        }
+
+        public async Task Doit(double[] w, int cashLevel)
         {
             ConcurrentBag<int> myCoins = new ConcurrentBag<int>();
             List<Task> cashTasks = new List<Task>();
@@ -159,9 +185,11 @@ namespace Miner
 
             List<Treasure> toCash = new List<Treasure>();
 
+            Random r = new Random();
+
             while(true) {
 
-                License license = await GetLicenseAsync(myCoins, client, licenseType);
+                License license = await GetLicenseAsync(myCoins, client, GetLicenseType(r, w));
 
                 if (nodes.Count < license.DigAllowed)
                 {
@@ -204,12 +232,10 @@ namespace Miner
 
                 nodes.RemoveAll(x => x.Depth > 10 || x.Report.Amount <= 0);
 
-                const int limit = 3;
-
                 toCash.Clear();
                 toCash.AddRange(
                     treasures
-                        .Where(x => (x.Depth < limit && myCoins.Count < 20) || x.Depth >= limit)
+                        .Where(x => (x.Depth < cashLevel && myCoins.Count < 20) || x.Depth >= cashLevel)
                 );
                 System.Threading.Interlocked.Add(ref _pendingTreasures, toCash.Count());
                 

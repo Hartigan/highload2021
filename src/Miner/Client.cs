@@ -43,22 +43,23 @@ namespace Miner
         {
             var socketsHandler = new SocketsHttpHandler
             {
-                PooledConnectionLifetime = TimeSpan.FromMinutes(10),
-                PooledConnectionIdleTimeout = TimeSpan.FromMinutes(5),
+                PooledConnectionLifetime = TimeSpan.Zero,
+                PooledConnectionIdleTimeout = TimeSpan.Zero,
                 ConnectCallback = async (ctx, cancellationToken) =>
                 {
                     var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
                     socket.NoDelay = true;
                     socket.UseOnlyOverlappedIO = true;
                     await socket.ConnectAsync(ctx.DnsEndPoint);
-                    var networkStream = new NetworkStream(socket);
+                    var networkStream = new NetworkStream(socket, true);
                     return networkStream;
-                }
+                },
             };
-
 
             _httpClient = new HttpClient(socketsHandler);
             _httpClient.DefaultRequestHeaders.Add("Accept", "application/json");
+            _httpClient.DefaultRequestVersion = HttpVersion.Version10;
+            _httpClient.DefaultVersionPolicy = HttpVersionPolicy.RequestVersionExact;
 
             _baseUrl = baseUrl;
             _logger = logger;

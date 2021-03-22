@@ -33,24 +33,20 @@ namespace Miner
 
         private List<Task> _workers = new List<Task>();
 
-        private void AddDiggers(List<Task> tasks, DiggerWorker.LicenseType licenseType, int count)
-        {
-            System.Console.WriteLine($"L: {licenseType}, C: {count}");
-            for (int i = 0; i < count; ++i) {
-                tasks.Add(_diggerWorker.Doit(licenseType));
-            }
-        }
-
         public Task Doit()
         {
             _workers.Add(_client.PrintStats());
             _workers.Add(_diggerWorker.CheckTreasures());
 
-            AddDiggers(_workers, DiggerWorker.LicenseType.Free, 0);
-            AddDiggers(_workers, DiggerWorker.LicenseType.One, 10);
-            AddDiggers(_workers, DiggerWorker.LicenseType.Six, 0);
-            AddDiggers(_workers, DiggerWorker.LicenseType.Eleven, 0);
-            AddDiggers(_workers, DiggerWorker.LicenseType.TwentyOne, 0);
+
+            double[] w = new double[] { 0.0, 1.0, 1.0, 1.0, 1.0 };
+            const int limit = 3;
+            System.Console.WriteLine($"L: {w[0]} {w[1]} {w[2]} {w[3]} {w[4]}, C = {limit}");
+
+            for(int i = 0; i < 10; ++i)
+            {
+                _workers.Add(_diggerWorker.Doit(w, limit));
+            }
 
             return Task.WhenAll(_workers);
         }

@@ -15,7 +15,8 @@ namespace Miner
         private readonly ConcurrentBag<Area> _areas = new ConcurrentBag<Area>();
 
         const int stepX = 3;
-        const int stepY = 5;
+        const int stepY = 10;
+
         public ExplorerWorker(
             ClientFactory clientFactory,
             ILogger<ExplorerWorker> logger)
@@ -28,7 +29,6 @@ namespace Miner
             Console.WriteLine($"Steps: x - {stepX}, y - {stepY}");
 
             var areas = new List<Area>(size * size / (stepX * stepY));
-            
 
             for(int x = 0; x< size/stepX; ++x) {
                 for(int y = 0; y < size/stepY;++y) {
@@ -60,7 +60,7 @@ namespace Miner
             Area area1, area2;
 
             if (a.SizeX > a.SizeY) {
-                var div = a.SizeX > 2 ? 3 : 2;
+                var div = a.SizeX > 2 ? a.SizeX : 2;
                 var newSizeX1 = a.SizeX / div;
                 var newSizeX2 = a.SizeX - newSizeX1;
                 area1 = new Area() {
@@ -77,7 +77,7 @@ namespace Miner
                 };
             }
             else {
-                var div = a.SizeY > 2 ? 3 : 2;
+                var div = a.SizeY > 2 ? a.SizeY : 2;
                 var newSizeY1 = a.SizeY / div;
                 var newSizeY2 = a.SizeY - newSizeY1;
                 area1 = new Area() {
@@ -232,6 +232,7 @@ namespace Miner
 
                 var newCells = await Task.WhenAll(areas.Select(async area => {
                     var report = await _client.ExploreAsync(area);
+
                     if (report.Amount == 0)
                     {
                         return Enumerable.Empty<MyNode>();
