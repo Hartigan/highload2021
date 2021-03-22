@@ -10,7 +10,7 @@ namespace Miner
 {
     public class DiggerWorker
     {
-        private readonly ClientFactory _clientFactory;
+        private readonly Client _client;
         private readonly ILogger<DiggerWorker> _logger;
         private readonly ExplorerWorker _explorerWorker;
         private readonly List<int> _empty = new List<int>();
@@ -19,7 +19,7 @@ namespace Miner
             ILogger<DiggerWorker> logger,
             ExplorerWorker explorerWorker)
         {
-            _clientFactory = clientFactory;
+            _client = clientFactory.Create();
             _logger = logger;
             _explorerWorker = explorerWorker;
         }
@@ -33,7 +33,7 @@ namespace Miner
             TwentyOne
         }
 
-        private Task<License> GetLicenseAsync(ConcurrentBag<int> myCoins, Client client, LicenseType type)
+        private Task<License> GetLicenseAsync(ConcurrentBag<int> myCoins, LicenseType type)
         {
             List<int> coins = _empty;
 
@@ -50,7 +50,7 @@ namespace Miner
                         }
                         else
                         {
-                            return GetLicenseAsync(myCoins, client, LicenseType.Eleven);
+                            return GetLicenseAsync(myCoins, LicenseType.Eleven);
                         }
                         break;
                     case LicenseType.Eleven:
@@ -60,7 +60,7 @@ namespace Miner
                         }
                         else
                         {
-                            return GetLicenseAsync(myCoins, client, LicenseType.Six);
+                            return GetLicenseAsync(myCoins, LicenseType.Six);
                         }
                         break;
                     case LicenseType.Six:
@@ -70,7 +70,7 @@ namespace Miner
                         }
                         else
                         {
-                            return GetLicenseAsync(myCoins, client, LicenseType.One);
+                            return GetLicenseAsync(myCoins, LicenseType.One);
                         }
                         break;
                     case LicenseType.One:
@@ -91,7 +91,7 @@ namespace Miner
                     coins.Add(c);
                 }
             }
-            return client.BuyLicenseAsync(coins);
+            return _client.BuyLicenseAsync(coins);
         }
 
         private int _pendingTreasures = 0;
@@ -107,9 +107,9 @@ namespace Miner
         private int[] _treasureCoins = new int[10];
         private int[] _treasureCounts = new int[10];
 
-        private async Task SellAsync(Treasure treasure, ConcurrentBag<int> myCoins, Client client)
+        private async Task SellAsync(Treasure treasure, ConcurrentBag<int> myCoins)
         {
-            List<int> coins = await client.CashAsync(treasure.Value);
+            List<int> coins = await _client.CashAsync(treasure.Value);
 
             _treasureCoins[treasure.Depth - 1] += coins.Count;
             _treasureCounts[treasure.Depth - 1]++;
@@ -170,16 +170,55 @@ namespace Miner
             }
         }
 
+        private async Task<List<MyNode>> ProcessExistedNode(MyNode node, int licenseId, ConcurrentBag<int> myCoins, int limit)
+        {
+            Dig dig = new Dig() {
+                LicenseId = licenseId,
+                PosX = node.Report.Area.PosX,
+                PosY = node.Report.Area.PosY,
+                Depth = node.Depth
+            };
+
+            var result = await _client.DigAsync(dig);
+
+            foreach(var treasure in result)
+            {
+                if (node.Depth >= limit || myCoins.Count < 20)
+                {
+                    System.Threading.Interlocked.Increment(ref _pendingTreasures);
+                    SellAsync(new Treasure() {
+                        Value = treasure,
+                        Depth = node.Depth,
+                        PosX = node.Report.Area.PosX,
+                        PosY = node.Report.Area.PosY
+                    }, myCoins);
+                }
+            }
+
+            node.Depth++;
+            node.Report.Amount -= result.Count;
+            return new List<MyNode> { node };
+        }
+
+        private async Task<List<MyNode>> ProcessNewNode(int licenseId, ConcurrentBag<int> myCoins, int limit)
+        {
+            List<MyNode> newNodes = new List<MyNode>();
+
+            await _explorerWorker.FindCells(newNodes, 1);
+
+            var processedNodes = await ProcessExistedNode(newNodes[0], licenseId, myCoins, limit);
+            newNodes[0] = processedNodes[0];
+            return newNodes;
+        }
+
         public async Task Doit(double[] w, int cashLevel)
         {
             ConcurrentBag<int> myCoins = new ConcurrentBag<int>();
             List<Task> cashTasks = new List<Task>();
 
-            int[] counts = new int[10];
-
-            Client client = _clientFactory.Create();
-
             List<MyNode> nodes = new List<MyNode>();
+
+            List<Task<List<MyNode>>> digTasks = new List<Task<List<MyNode>>>();
 
             List<Treasure> treasures = new List<Treasure>();
 
@@ -188,66 +227,30 @@ namespace Miner
             Random r = new Random();
 
             while(true) {
+                License license = await GetLicenseAsync(myCoins, GetLicenseType(r, w));
 
-                License license = await GetLicenseAsync(myCoins, client, GetLicenseType(r, w));
+                int neededCount = license.DigAllowed - nodes.Count;
 
-                if (nodes.Count < license.DigAllowed)
+                digTasks.Clear();
+
+                foreach(var node in nodes.Take(license.DigAllowed))
                 {
-                    await _explorerWorker.FindCells(nodes, license.DigAllowed);
+                    digTasks.Add(ProcessExistedNode(node, license.Id ?? 0, myCoins, cashLevel));
                 }
 
-                var results = await Task.WhenAll(
-                    nodes
-                        .Take(license.DigAllowed)
-                        .Select(node => new Dig()
-                            {
-                                LicenseId = license.Id ?? 0,
-                                PosX = node.Report.Area.PosX,
-                                PosY = node.Report.Area.PosY,
-                                Depth = node.Depth
-                        })
-                        .Select(client.DigAsync));
-
-
-                treasures.Clear();
-                for(int i = 0; i < results.Length; ++i)
+                for(int i = 0; i < neededCount; ++i)
                 {
-                    if (results[i].Count > 0)
-                    {
-                        foreach(var treasure in results[i])
-                        {
-                            treasures.Add(new Treasure() {
-                                Value = treasure,
-                                Depth = nodes[i].Depth,
-                                PosX = nodes[i].Report.Area.PosX,
-                                PosY = nodes[i].Report.Area.PosY
-                            });
-                        }
-                    }
-
-                    counts[nodes[i].Depth - 1] += results[i].Count;
-                    nodes[i].Depth++;
-                    nodes[i].Report.Amount -= results[i].Count;
+                    digTasks.Add(ProcessNewNode(license.Id ?? 0, myCoins, cashLevel));
                 }
 
-                nodes.RemoveAll(x => x.Depth > 10 || x.Report.Amount <= 0);
+                var nodeLists = await Task.WhenAll(digTasks);
 
-                toCash.Clear();
-                toCash.AddRange(
-                    treasures
-                        .Where(x => (x.Depth < cashLevel && myCoins.Count < 20) || x.Depth >= cashLevel)
-                );
-                System.Threading.Interlocked.Add(ref _pendingTreasures, toCash.Count());
-                
-                cashTasks.Add(
-                    Task.WhenAll(
-                        toCash
-                            .Select(x => SellAsync(x, myCoins, client))
-                    )
-                );
+                var skippedNodes = nodes.Skip(license.DigAllowed).ToList();
+
+                nodes.Clear();
+                nodes.AddRange(skippedNodes);
+                nodes.AddRange(nodeLists.SelectMany(x => x).Where(x => x.Depth <= 10 && x.Report.Amount > 0));
             }
-
-            await Task.WhenAll(cashTasks);
         }
     }
 }
