@@ -1,2 +1,2 @@
-docker tag hl2021 stor.highloadcup.ru/rally/light_chameleon
-docker push stor.highloadcup.ru/rally/light_chameleon
+docker tag hl2021 stor.highloadcup.ru/rally/oyster_flyer
+docker push stor.highloadcup.ru/rally/oyster_flyer
