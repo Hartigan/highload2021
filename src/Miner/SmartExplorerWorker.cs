@@ -148,62 +148,74 @@ namespace Miner
             }
         }
 
-        private async Task FillByRows(
-            int[,] map,
-            int[] rows,
+        class Context
+        {
+            public int[,] map;
+            public int[] rows;
+            public int[] cols;
+            public List<int[,]> candidates;
+            public int[,] verified;
+            public List<Point> verifiedList;
+            public Explore[] rawRows;
+            public Explore[] rawCols;
+        }
+
+        private void FillByRows(
             int rowIndex,
-            int[] cols,
             int initialColIndex,
-            List<int[,]> candidates,
-            int[,] verified,
-            List<Point> verifiedList,
-            Explore[] rawRows,
-            Explore[] rawCols
+            Context context
         )
         {
-            if (rowIndex == rows.Length)
+            if (rowIndex == context.rows.Length)
             {
-                candidates.Add((int[,])map.Clone());
+                context.candidates.Add((int[,])context.map.Clone());
 
-                if (candidates.Count > 4)
+                if (context.candidates.Count > 4)
                 {
-                    await RemoveCandidates(candidates, verified, verifiedList, rawRows, rawCols);
+                    RemoveCandidates(context.candidates, context.verified, context.verifiedList, context.rawRows, context.rawCols).Wait();
                 }
                 
                 return;
             }
 
-            if (rows[rowIndex] == 0)
+            if (context.rows[rowIndex] == 0)
             {
-                await FillByRows(map, rows, rowIndex + 1, cols, 0, candidates, verified, verifiedList, rawRows, rawCols);
+                FillByRows(rowIndex + 1, 0, context);
                 return;
             }
 
             for(int colIndex = initialColIndex; colIndex < side; ++colIndex)
             {
-                map[rowIndex, colIndex]++;
-                rows[rowIndex]--;
-                cols[colIndex]--;
+                context.map[rowIndex, colIndex]++;
+                context.rows[rowIndex]--;
+                context.cols[colIndex]--;
 
-                var source = verifiedList.Count;
-                if (map[rowIndex, colIndex] < 3 &&
-                    cols[colIndex] >= 0 && rows[rowIndex] >= 0 &&
-                    (verified[rowIndex, colIndex] >= 0 && verified[rowIndex, colIndex] == map[rowIndex, colIndex] || verified[rowIndex, colIndex] < 0)) {
-                    await FillByRows(map, rows, rowIndex, cols, colIndex, candidates, verified, verifiedList, rawRows, rawCols);
+                var source = context.verifiedList.Count;
+                if (context.map[rowIndex, colIndex] < 3 &&
+                    context.cols[colIndex] >= 0 && context.rows[rowIndex] >= 0 &&
+                    (context.verified[rowIndex, colIndex] >= 0 && context.verified[rowIndex, colIndex] == context.map[rowIndex, colIndex] || context.verified[rowIndex, colIndex] < 0)) {
+                    FillByRows(rowIndex, colIndex, context);
                 }
 
-                map[rowIndex, colIndex]--;
-                rows[rowIndex]++;
-                cols[colIndex]++;
+                context.map[rowIndex, colIndex]--;
+                context.rows[rowIndex]++;
+                context.cols[colIndex]++;
 
-                if (source != verifiedList.Count)
+                if (source != context.verifiedList.Count)
                 {
-                    for(int i = source; i < verifiedList.Count; ++i)
+                    for(int i = source; i < context.verifiedList.Count; ++i)
                     {
-                        var p = verifiedList[i];
+                        var p = context.verifiedList[i];
                         if (p.Y < rowIndex)
                         {
-                            if (map[p.Y, p.X] != p.Amount)
+                            if (context.map[p.Y, p.X] != p.Amount)
+                            {
+                                return;
+                            }
+                        }
+                        else if (p.Y == rowIndex && p.X <= initialColIndex)
+                        {
+                            if (context.map[p.Y, p.X] != p.Amount)
                             {
                                 return;
                             }
@@ -230,7 +242,19 @@ namespace Miner
 
             var sw = new System.Diagnostics.Stopwatch();
             sw.Start();
-            await FillByRows(map, amountsRows, 0, amountsCols, 0, candidates, verified, verifiedList, rows, cols);
+
+            var context = new Context()
+            {
+                map = map,
+                rows = amountsRows,
+                cols = amountsCols,
+                candidates = candidates,
+                verified = verified,
+                verifiedList = verifiedList,
+                rawRows = rows,
+                rawCols = cols
+            };
+            FillByRows(0, 0, context);
 
             await RemoveCandidates(candidates, verified, verifiedList, rows, cols);
 
