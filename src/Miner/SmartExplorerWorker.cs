@@ -31,7 +31,7 @@ namespace Miner
             for(int x = 0; x < size / 2 / side; ++x) {
                 for(int y = 0; y < size/side;++y) {
                     var area = new Area() {
-                        PosX = size / 2 + x*side,
+                        PosX = (size / 2) + x*side,
                         PosY = y*side,
                         SizeX = side,
                         SizeY = side
@@ -100,7 +100,94 @@ namespace Miner
             return true;
         }
 
-        private async Task RemoveCandidates(
+        private int[] stat = new int[3];
+
+        private async Task<List<Point>> ExploreSubRow(Explore[] rows, int rowIndex, Explore[] cols, int colIndex, int subRowLength /* 1-3 */)
+        {
+            var result = new List<Point>();
+
+            var firstArea = new Area()
+            {
+                PosX = cols[colIndex].Area.PosX,
+                PosY = rows[rowIndex].Area.PosY,
+                SizeX = subRowLength,
+                SizeY = 1
+            };
+
+            var firstReport = await _client.ExploreAsync(firstArea);
+
+            if (firstReport.Amount == 0 || subRowLength == 1)
+            {
+                for(int i = 0; i < subRowLength; ++i)
+                {
+                    result.Add(new Point() {
+                        X = colIndex + i,
+                        Y = rowIndex,
+                        Amount = firstReport.Amount
+                    });
+                }
+                stat[0]++;
+                return result;
+            }
+
+            var secondArea = new Area()
+            {
+                PosX = cols[colIndex].Area.PosX,
+                PosY = rows[rowIndex].Area.PosY,
+                SizeX = 1,
+                SizeY = 1
+            };
+
+            var secondReport = await _client.ExploreAsync(secondArea);
+
+            result.Add(new Point() {
+                X = colIndex,
+                Y = rowIndex,
+                Amount = secondReport.Amount
+            });
+
+            if (secondReport.Amount == firstReport.Amount || subRowLength == 2)
+            {
+                for(int i = 1; i < subRowLength; ++i)
+                {
+                    result.Add(new Point() {
+                        X = colIndex + i,
+                        Y = rowIndex,
+                        Amount = firstReport.Amount - secondReport.Amount
+                    });
+                }
+                stat[1]++;
+                return result;
+            }
+
+            var leftAmount = firstReport.Amount - secondReport.Amount;
+
+            var thirdArea = new Area()
+            {
+                PosX = cols[colIndex].Area.PosX + 1,
+                PosY = rows[rowIndex].Area.PosY,
+                SizeX = 1,
+                SizeY = 1
+            };
+
+            var thirdReport = await _client.ExploreAsync(thirdArea);
+
+            result.Add(new Point() {
+                X = colIndex + 1,
+                Y = rowIndex,
+                Amount = thirdReport.Amount
+            });
+
+            result.Add(new Point() {
+                X = colIndex + 2,
+                Y = rowIndex,
+                Amount = leftAmount - thirdReport.Amount
+            });
+            stat[2]++;
+            return result;
+        }
+
+        private void RemoveCandidates(
             List<int[,]> candidates,
             int[,] verified,
             List<Point> verfiedList,
@@ -121,22 +208,27 @@ namespace Miner
             {
                 if (verified[row, col] < 0 && candidate[row, col] > 0)
                 {
-                    var report = await _client.ExploreAsync(new Area()
+                    var subRowLength = 1;
+
+                    if (col < side - 2 && verified[row, col + 1] < 0 && verified[row, col + 2] < 0)
                     {
-                        PosX = cols[col].Area.PosX,
-                        PosY = rows[row].Area.PosY,
-                        SizeX = 1,
-                        SizeY = 1
-                    });
+                        subRowLength = 3;
+                    }
+                    else if (col < side - 1 && verified[row, col + 1] < 0)
+                    {
+                        subRowLength = 2;
+                    }
 
-                    verified[row, col] = report.Amount;
-                    verfiedList.Add(new Point() {
-                        X = col,
-                        Y = row,
-                        Amount = report.Amount
-                    });
+                    var task = ExploreSubRow(rows, row, cols, col, subRowLength);
+                    task.Wait();
+                    var newPoints = task.Result;
 
-                    candidates.RemoveAll(x => x[row, col] != report.Amount);
+                    foreach(var p in newPoints)
+                    {
+                        verified[p.Y, p.X] = p.Amount;
+                    }
+                    verfiedList.AddRange(newPoints);
+                    candidates.RemoveAll(x => !CheckByVerified(x, newPoints));
 
                     if (candidates.Count < 2)
                     {
@@ -160,6 +252,15 @@ namespace Miner
             public Explore[] rawCols;
         }
 
+        private bool Compare(int[,] a, int[,] b)
+        {
+            for(int i = 0 ; i < side; i++)
+            for(int j = 0; j < side; j++)
+                if (a[i, j] != b[i, j])
+                    return false;
+            return true;
+        }
+
         private void FillByRows(
             int rowIndex,
             int initialColIndex,
@@ -168,11 +269,19 @@ namespace Miner
         {
             if (rowIndex == context.rows.Length)
             {
+                foreach(var c in context.candidates)
+                {
+                    if (Compare(c, context.map))
+                    {
+                        Console.WriteLine("rest");
+                    }
+                }
+
                 context.candidates.Add((int[,])context.map.Clone());
 
                 if (context.candidates.Count > 4)
                 {
-                    RemoveCandidates(context.candidates, context.verified, context.verifiedList, context.rawRows, context.rawCols).Wait();
+                    RemoveCandidates(context.candidates, context.verified, context.verifiedList, context.rawRows, context.rawCols);
                 }
                 
                 return;
@@ -186,46 +295,73 @@ namespace Miner
 
             for(int colIndex = initialColIndex; colIndex < side; ++colIndex)
             {
-                context.map[rowIndex, colIndex]++;
-                context.rows[rowIndex]--;
-                context.cols[colIndex]--;
+                if (context.verified[rowIndex, colIndex] >= 0)
+                {
+                    var delta = context.verified[rowIndex, colIndex] - context.map[rowIndex, colIndex];
 
-                var source = context.verifiedList.Count;
-                if (context.map[rowIndex, colIndex] < 3 &&
-                    context.cols[colIndex] >= 0 && context.rows[rowIndex] >= 0 &&
-                    (context.verified[rowIndex, colIndex] >= 0 && context.verified[rowIndex, colIndex] == context.map[rowIndex, colIndex] || context.verified[rowIndex, colIndex] < 0)) {
-                    FillByRows(rowIndex, colIndex, context);
+                    context.map[rowIndex, colIndex] += delta;
+                    context.rows[rowIndex] -= delta;
+                    context.cols[colIndex] -= delta;
+
+                    if (context.cols[colIndex] >= 0 && context.rows[rowIndex] >= 0) {
+                        FillByRows(rowIndex, colIndex + 1, context);
+                    }
+
+                    context.map[rowIndex, colIndex] -= delta;
+                    context.rows[rowIndex] += delta;
+                    context.cols[colIndex] += delta;
+
+                    return;
                 }
 
-                context.map[rowIndex, colIndex]--;
-                context.rows[rowIndex]++;
-                context.cols[colIndex]++;
-
-                if (source != context.verifiedList.Count)
+                for(int amount = 2; amount >= 1; amount--)
                 {
-                    for(int i = source; i < context.verifiedList.Count; ++i)
+                    context.map[rowIndex, colIndex]+= amount;
+                    context.rows[rowIndex]-= amount;
+                    context.cols[colIndex]-= amount;
+
+                    var source = context.verifiedList.Count;
+                    if (context.cols[colIndex] >= 0 && context.rows[rowIndex] >= 0 &&
+                        (context.verified[rowIndex, colIndex] >= 0 && context.verified[rowIndex, colIndex] == context.map[rowIndex, colIndex] || context.verified[rowIndex, colIndex] < 0)) {
+                        FillByRows(rowIndex, colIndex + 1, context);
+                    }
+
+                    context.map[rowIndex, colIndex]-= amount;
+                    context.rows[rowIndex]+= amount;
+                    context.cols[colIndex]+= amount;
+
+                    if (source != context.verifiedList.Count)
                     {
-                        var p = context.verifiedList[i];
-                        if (p.Y < rowIndex)
+                        for(int i = source; i < context.verifiedList.Count; ++i)
                         {
-                            if (context.map[p.Y, p.X] != p.Amount)
+                            var p = context.verifiedList[i];
+                            if (p.Y < rowIndex)
                             {
-                                return;
+                                if (context.map[p.Y, p.X] != p.Amount)
+                                {
+                                    return;
+                                }
                             }
-                        }
-                        else if (p.Y == rowIndex && p.X <= initialColIndex)
-                        {
-                            if (context.map[p.Y, p.X] != p.Amount)
+                            else if (p.Y == rowIndex && p.X < colIndex)
                             {
-                                return;
+                                if (context.map[p.Y, p.X] != p.Amount)
+                                {
+                                    return;
+                                }
+                            }
+                            else
+                            {
+                                //Console.WriteLine("Oh wait");
                             }
                         }
                     }
                 }
+
+                
             }
         }
 
-        private async Task<int[,]> FindSolution(Explore[] rows, Explore[] cols)
+        private int[,] FindSolution(Explore[] rows, Explore[] cols)
         {
             int[,] map = new int[side, side];
             List<int[,]> candidates = new List<int[,]>();
@@ -254,9 +390,10 @@ namespace Miner
                 rawRows = rows,
                 rawCols = cols
             };
+
             FillByRows(0, 0, context);
 
-            await RemoveCandidates(candidates, verified, verifiedList, rows, cols);
+            RemoveCandidates(candidates, verified, verifiedList, rows, cols);
 
             sw.Stop();
 
@@ -265,13 +402,7 @@ namespace Miner
                 Console.WriteLine("wtf");
             }
 
-            Console.WriteLine($"Verified = {verifiedList.Count} Time = {sw.ElapsedMilliseconds}");
-
-            if (sw.ElapsedMilliseconds > 2000)
-            {
-                Console.WriteLine("Long");
-            }
-
+            Console.WriteLine($"Verified = {verifiedList.Count} Time = {sw.ElapsedMilliseconds} Stat = {stat[0]} {stat[1]} {stat[2]}");
             return candidates[0];
         }
 
@@ -296,7 +427,7 @@ namespace Miner
                 var colsReports = result[1];
 
                 
-                var map = await FindSolution(rowsReports, colsReports);
+                var map = await Task.Run(() => FindSolution(rowsReports, colsReports));
 
                 for(int x = 0; x < side; ++x)
                 {
