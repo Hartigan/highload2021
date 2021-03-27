@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.IO;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Json;
@@ -65,9 +67,8 @@ namespace Miner
             _logger = logger;
         }
 
-        private Task<T> DoRequest<T>(Func<Task<T>> func)
+        private async Task<T> DoRequest<T>(Func<Task<T>> func)
         {
-            return Task.Run(async () => {
                 T result = default(T);
                 do
                 {
@@ -80,7 +81,6 @@ namespace Miner
                     }
                 } while(result == null);
                 return result;
-            });
         }
 
         private async Task<T> Parse<T>(HttpContent content)
@@ -190,10 +190,7 @@ namespace Miner
 
         public Task<List<string>> DigAsync(Dig dig)
         {
-            return Task.Run(async () => {
-                donext:
-                try
-                {
+            return DoRequest(async () => {
                     using (var request = new HttpRequestMessage(HttpMethod.Post, _baseUrl + "/dig"))
                     {
                         request.Content = ToHttpContent(dig);
@@ -222,11 +219,6 @@ namespace Miner
                             return await response.Content.ReadFromJsonAsync<List<string>>();
                         }
                     }
-                }
-                catch
-                {
-                    goto donext;
-                }
             });
         }
 
