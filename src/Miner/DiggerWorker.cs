@@ -200,18 +200,18 @@ namespace Miner
             return new List<MyNode> { node };
         }
 
-        private async Task<List<MyNode>> ProcessNewNode(int licenseId, ConcurrentBag<int> myCoins, int limit)
+        private async Task<List<MyNode>> ProcessNewNode(int licenseId, ConcurrentBag<int> myCoins, int limit, int workerX, int workerY)
         {
             List<MyNode> newNodes = new List<MyNode>();
 
-            await _explorerWorker.FindCells(newNodes, 1);
+            await _explorerWorker.FindCells(newNodes, 1, workerX, workerY);
 
             var processedNodes = await ProcessExistedNode(newNodes[0], licenseId, myCoins, limit);
             newNodes[0] = processedNodes[0];
             return newNodes;
         }
 
-        public async Task Doit(double[] w, int cashLevel)
+        public async Task Doit(double[] w, int cashLevel, int worker)
         {
             ConcurrentBag<int> myCoins = new ConcurrentBag<int>();
             List<Task> cashTasks = new List<Task>();
@@ -240,7 +240,7 @@ namespace Miner
 
                 for(int i = 0; i < neededCount; ++i)
                 {
-                    digTasks.Add(ProcessNewNode(license.Id ?? 0, myCoins, cashLevel));
+                    digTasks.Add(ProcessNewNode(license.Id ?? 0, myCoins, cashLevel, worker, i));
                 }
 
                 var nodeLists = await Task.WhenAll(digTasks);

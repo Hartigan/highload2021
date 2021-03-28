@@ -45,7 +45,7 @@ namespace Miner
 
             for(int i = 0; i < 10; ++i)
             {
-                _workers.Add(_diggerWorker.Doit(w, limit));
+                _workers.Add(_diggerWorker.Doit(w, limit, i));
             }
 
             return Task.WhenAll(_workers);
