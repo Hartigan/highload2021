@@ -12,28 +12,10 @@ namespace Miner
     {
         private readonly Client _client;
         private readonly ILogger<ExplorerWorker> _logger;
+        private readonly ConcurrentBag<Area> _areas = new ConcurrentBag<Area>();
 
         const int stepX = 3;
-        const int stepY = 5;
-
-        const int size = 3500;
-
-        const int sizeX = size/stepX;
-        const int sizeY = size/stepY;
-        const int WorkersX = 10;
-        const int WorkersY = 5;
-
-        private Block[,] _map = new Block[sizeX, sizeY];
-
-        private LinkedList<Block>[,] _borders = new LinkedList<Block>[WorkersX, WorkersY];
-        private class Block
-        {
-            public Area Area;
-            public int X;
-            public int Y;
-            public int Amount = -1;
-            public bool Used = false;
-        }
+        const int stepY = 10;
 
         public ExplorerWorker(
             ClientFactory clientFactory,
@@ -42,164 +24,35 @@ namespace Miner
             _client = clientFactory.Create();
             _logger = logger;
 
-            for(int x = 0; x < WorkersX; x++)
-            for(int y = 0; y < WorkersY; y++)
-                _borders[x, y] = new LinkedList<Block>();
+            int size = 3500;
 
             Console.WriteLine($"Steps: x - {stepX}, y - {stepY}");
 
-            for(int x = 0; x< sizeX; ++x) {
-                for(int y = 0; y < sizeY;++y) {
-                    _map[x, y] = new Block() {
-                        Area = new Area() {
-                            PosX = x*stepX,
-                            PosY = y*stepY,
-                            SizeX = stepX,
-                            SizeY = stepY
-                        },
-                        X = x,
-                        Y = y,
+            var areas = new List<Area>(size * size / (stepX * stepY));
+
+            for(int x = 0; x< size/stepX; ++x) {
+                for(int y = 0; y < size/stepY;++y) {
+                    var area = new Area() {
+                        PosX = x*stepX,
+                        PosY = y*stepY,
+                        SizeX = stepX,
+                        SizeY = stepY
                     };
+
+                    areas.Add(area);
                 }
             }
-        }
 
-        private Random _rng = new Random();
-
-        private Block GetRandomBlock(int workerX, int workerY)
-        {
-            const int sx = sizeX / WorkersX;
-            const int sy = sizeY / WorkersY;
-
-
-            Block r = _map[_rng.Next()%(sizeX / WorkersX) + sx * workerX, _rng.Next() % (sizeY / WorkersY) + sy * workerY];
-            while(r.Amount >= 0)
+            Random rng = new Random();
+            foreach(var a in areas.OrderBy(x => rng.Next()))
             {
-                r = _map[_rng.Next()%(sizeX / WorkersX) + sx * workerX, _rng.Next() % (sizeY / WorkersY) + sy * workerY];
+                _areas.Add(a);
             }
-            return r;
-        }
 
-        const double BaseAmount = stepX * stepY * 0.04;
-        const int Radius = 3;
-        
-
-        private double Estimate(Block b)
-        {
-            List<Block> neighbors = new List<Block>();
-
-            double megaBlock = 0;
-
-            double sum = 0;
-
-            for(int x = -Radius; x <= Radius; ++x)
-            for(int y = -Radius; y <= Radius; ++y)
+            for(int i = 1; i < requestsCount.Length; ++i)
             {
-                if (x + b.X < 0 || x + b.X >= sizeX || y + b.Y < 0 || y + b.Y >= sizeY)
-                {
-                    continue;
-                }
-
-                megaBlock += BaseAmount;
-
-                if (x == 0 && y == 0)
-                {
-                    continue;
-                }
-
-                var n = _map[x + b.X, y + b.Y];
-
-                if (n.Amount < 0)
-                {
-                    sum += BaseAmount;
-                }
-                else
-                {
-                    sum += n.Amount;
-                }
+                GetRequestsCount(i);
             }
-
-            return megaBlock - sum;
-        }
-
-        private List<Block> GetFreeNeighbors(Block b)
-        {
-            var result = new List<Block>();
-
-            for(int x = -1; x <= 1; ++x)
-            for(int y = -1; y <= 1; ++y)
-            {
-                if (x + b.X < 0 || x + b.X >= sizeX || y + b.Y < 0 || y + b.Y >= sizeY)
-                {
-                    continue;
-                }
-
-                if (x == 0 && y == 0)
-                {
-                    continue;
-                }
-
-                var n = _map[x + b.X, y + b.Y];
-
-                if (n.Amount < 0)
-                {
-                    result.Add(n);
-                }
-            }
-
-            return result;
-        }
-
-        private List<Tuple<Block, double>> GetBlocks(int workerX, int workerY)
-        {
-            var border = _borders[workerX, workerY];
-
-            if (border.Count == 0)
-            {
-                return new List<Tuple<Block, double>>() {
-                    new Tuple<Block, double>(GetRandomBlock(workerX, workerY), BaseAmount),
-                };
-            }
-
-            var candidates = new Dictionary<int, Dictionary<int, Block>>();
-
-            var current = border.First;
-
-            while(current != null)
-            {
-                var c = current;
-                current = current.Next;
-
-                var neighbors = GetFreeNeighbors(c.Value);
-                if (neighbors.Count == 0)
-                {
-                    border.Remove(c);
-                }
-
-                foreach(var n in neighbors)
-                {
-                    Dictionary<int, Block> yDict = null;
-                    if (!candidates.TryGetValue(n.X, out yDict))
-                    {
-                        yDict = new Dictionary<int, Block>();
-                        candidates[n.X] = yDict;
-                    }
-                    yDict[n.Y] = n;
-                }
-            }
-
-            var blocks = candidates.SelectMany(x => x.Value.Values);
-
-            if (!blocks.Any())
-            {
-                return new List<Tuple<Block, double>>() {
-                    new Tuple<Block, double>(GetRandomBlock(workerX, workerY), BaseAmount)
-                };
-            }
-
-            var result = blocks.Select(x => new Tuple<Block, double>(x, Estimate(x))).OrderByDescending(x => x.Item2).ToList();
-
-            return result;
         }
 
         private List<Area> Split(Area a)
@@ -317,51 +170,81 @@ namespace Miner
             return Combinations(n, k) * Math.Pow(p, k) * Math.Pow(1 - p, n - k);
         }
 
-        public async Task FindCells(List<MyNode> cells, int count, int workerX, int workerY)
+        private int[] requestsCount = new int[50];
+
+        private int GetRequestsCount(int k)
+        {
+            if (requestsCount[k] > 0)
+            {
+                return requestsCount[k];
+            }
+
+            const int blockSize = stepX * stepY;
+            const double confidence = 0.95;
+            const double precision = 0.001;
+
+            double currentConfidence = 0;
+            int currentN = k;
+
+            do
+            {
+                currentN++;
+                currentConfidence = 0;
+                for(int i = k; i <= currentN; ++i)
+                {
+                    double b = Bernoulli(currentN, i);
+
+                    currentConfidence += b;
+                    if (b < precision)
+                    {
+                        break;
+                    }
+                }
+            }
+            while(currentConfidence < confidence);
+
+            if (currentN % blockSize == 0)
+            {
+                requestsCount[k] = currentN / blockSize;
+            }
+            else
+            {
+                requestsCount[k] = currentN / blockSize + 1;
+            }
+
+            return requestsCount[k];
+        }
+
+        public async Task FindCells(List<MyNode> cells, int count)
         {
             List<Area> areas = new List<Area>(count - cells.Count);
             while(cells.Count < count)
             {
-                var blocks = GetBlocks(workerX, workerY);
-
-                Block block = null;
-
-                while(true)
+                areas.Clear();
+                while(areas.Count < GetRequestsCount(count - cells.Count))
                 {
-                    foreach(var b in blocks)
+                    Area area = null;
+                    if (_areas.TryTake(out area))
                     {
-                        block = b.Item1;
-                        if (!block.Used)
-                        {
-                            lock(block)
-                            {
-                                if (!block.Used)
-                                {
-                                    block.Used = true;
-                                    goto exit;
-                                }
-                            }
-                        }
+                        areas.Add(area);
                     }
-                    
-                    blocks = GetBlocks(workerX, workerY);
-                }
-                exit:
-                var report = await _client.ExploreAsync(block.Area);
-                block.Amount = report.Amount;
-                _borders[workerX, workerY].AddFirst(block);
-
-                if (block.Amount == 0)
-                {
-                    continue;
                 }
 
-                var newCells = await ProcessNode(new MyNode()
-                {
-                    Report = report
-                });
+                var newCells = await Task.WhenAll(areas.Select(async area => {
+                    var report = await _client.ExploreAsync(area);
+                    Console.WriteLine(report.Amount);
 
-                cells.AddRange(newCells);
+                    if (report.Amount == 0)
+                    {
+                        return Enumerable.Empty<MyNode>();
+                    }
+
+                    return await ProcessNode(new MyNode() {
+                        Report = report
+                    });
+                }));
+
+                cells.AddRange(newCells.SelectMany(x => x));
             }
         }
     }
