@@ -183,7 +183,7 @@ namespace Miner
 
             foreach(var treasure in result)
             {
-                if (node.Depth >= limit || myCoins.Count < 20)
+                if (node.Depth >= limit)
                 {
                     System.Threading.Interlocked.Increment(ref _pendingTreasures);
                     SellAsync(new Treasure() {
@@ -204,7 +204,7 @@ namespace Miner
         {
             List<MyNode> newNodes = new List<MyNode>();
 
-            await _explorerWorker.FindCells(newNodes, 1, workerX, workerY);
+            await _explorerWorker.FindCells(newNodes, 1);
 
             var processedNodes = await ProcessExistedNode(newNodes[0], licenseId, myCoins, limit);
             newNodes[0] = processedNodes[0];

@@ -232,7 +232,6 @@ namespace Miner
 
                 var newCells = await Task.WhenAll(areas.Select(async area => {
                     var report = await _client.ExploreAsync(area);
-                    Console.WriteLine(report.Amount);
 
                     if (report.Amount == 0)
                     {
